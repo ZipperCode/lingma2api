@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"reflect"
 	"sync"
 	"time"
 )
@@ -39,6 +40,22 @@ func (store *SessionStore) BuildMessages(_ context.Context, sessionID string, in
 	return mergeMessages(existing.Messages, incoming), nil
 }
 
+func (store *SessionStore) BuildCanonicalRequest(_ context.Context, sessionID string, incoming CanonicalRequest) (CanonicalRequest, error) {
+	if sessionID == "" {
+		return cloneCanonicalRequest(incoming), nil
+	}
+
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	store.sweepExpiredLocked()
+
+	merged := cloneCanonicalRequest(incoming)
+	merged.SessionID = sessionID
+	existing := store.sessions[sessionID]
+	merged.Turns = mergeCanonicalTurns(existing.Turns, incoming.Turns)
+	return merged, nil
+}
+
 func (store *SessionStore) SaveResponse(_ context.Context, sessionID string, requestMessages []Message, assistant Message) error {
 	if sessionID == "" {
 		return nil
@@ -55,6 +72,34 @@ func (store *SessionStore) SaveResponse(_ context.Context, sessionID string, req
 		ID:           sessionID,
 		Messages:     saved,
 		MessageCount: len(saved),
+		UpdatedAt:    store.now(),
+	}
+	return nil
+}
+
+func (store *SessionStore) SaveCanonicalResponse(_ context.Context, sessionID string, request CanonicalRequest, assistant Message) error {
+	if sessionID == "" {
+		return nil
+	}
+
+	assistantCanonical, err := CanonicalizeOpenAIRequest(OpenAIChatRequest{
+		Messages: []Message{assistant},
+	}, sessionID)
+	if err != nil {
+		return err
+	}
+
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	store.sweepExpiredLocked()
+	store.ensureCapacityLocked(sessionID)
+
+	savedTurns := mergeCanonicalTurns(nil, request.Turns)
+	savedTurns = append(savedTurns, assistantCanonical.Turns...)
+	store.sessions[sessionID] = SessionState{
+		ID:           sessionID,
+		Turns:        savedTurns,
+		MessageCount: len(savedTurns),
 		UpdatedAt:    store.now(),
 	}
 	return nil
@@ -135,6 +180,54 @@ func mergeMessages(existing, incoming []Message) []Message {
 	merged := cloneMessages(existing)
 	merged = append(merged, incoming...)
 	return merged
+}
+
+func mergeCanonicalTurns(existing, incoming []CanonicalTurn) []CanonicalTurn {
+	if len(existing) == 0 {
+		return cloneCanonicalTurns(incoming)
+	}
+	if len(incoming) == 0 {
+		return cloneCanonicalTurns(existing)
+	}
+	if hasCanonicalTurnPrefix(incoming, existing) {
+		return cloneCanonicalTurns(incoming)
+	}
+	merged := cloneCanonicalTurns(existing)
+	merged = append(merged, cloneCanonicalTurns(incoming)...)
+	return merged
+}
+
+func hasCanonicalTurnPrefix(incoming, existing []CanonicalTurn) bool {
+	if len(incoming) < len(existing) {
+		return false
+	}
+	for index := range existing {
+		if !reflect.DeepEqual(incoming[index], existing[index]) {
+			return false
+		}
+	}
+	return true
+}
+
+func cloneCanonicalRequest(request CanonicalRequest) CanonicalRequest {
+	cloned := request
+	cloned.Turns = cloneCanonicalTurns(request.Turns)
+	return cloned
+}
+
+func cloneCanonicalTurns(turns []CanonicalTurn) []CanonicalTurn {
+	if turns == nil {
+		return nil
+	}
+	cloned := make([]CanonicalTurn, len(turns))
+	copy(cloned, turns)
+	for turnIndex := range cloned {
+		if turns[turnIndex].Blocks != nil {
+			cloned[turnIndex].Blocks = make([]CanonicalContentBlock, len(turns[turnIndex].Blocks))
+			copy(cloned[turnIndex].Blocks, turns[turnIndex].Blocks)
+		}
+	}
+	return cloned
 }
 
 func hasMessagePrefix(candidate, prefix []Message) bool {

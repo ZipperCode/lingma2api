@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -41,26 +42,37 @@ func (server *Server) handleAnthropicMessages(writer http.ResponseWriter, reques
 		anthropicReq.MaxTokens = 4096
 	}
 
-	// Convert Anthropic → IR messages.
-	irMessages, err := proxy.ConvertAnthropicToIR(anthropicReq)
+	sessionID := requestSessionID(request, "")
+	canonicalRequest, err := proxy.CanonicalizeAnthropicRequest(anthropicReq, sessionID)
 	if err != nil {
 		writeAnthropicError(writer, http.StatusBadRequest, err.Error())
 		return
 	}
+	attachCanonicalRequestMetadata(&canonicalRequest, request.Header)
 
-	// Enable Lingma native reasoning when Anthropic thinking is not explicitly disabled.
-	reasoning := anthropicReq.Thinking == nil || anthropicReq.Thinking.Type != "disabled"
-
-	// Build an OpenAI-compatible request for the body builder.
-	openaiReq := proxy.OpenAIChatRequest{
-		Model:     anthropicReq.Model,
-		Stream:    anthropicReq.Stream,
-		Messages:  irMessages,
-		Tools:     anthropicReq.Tools,
-		Reasoning: reasoning,
+	policyResult, err := server.evaluateCanonicalRequest(request.Context(), canonicalRequest)
+	if err != nil {
+		writeAnthropicError(writer, http.StatusInternalServerError, "policy: "+err.Error())
+		return
+	}
+	sessionCanonicalRequest, err := server.deps.Sessions.BuildCanonicalRequest(request.Context(), sessionID, policyResult.PostPolicyRequest)
+	if err != nil {
+		writeAnthropicError(writer, http.StatusInternalServerError, "sessions: "+err.Error())
+		return
+	}
+	projectedRequest, projectedMessages, err := proxy.ProjectCanonicalToOpenAIRequest(sessionCanonicalRequest)
+	if err != nil {
+		writeAnthropicError(writer, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := validateChatRequest(&projectedRequest); err != nil {
+		writeAnthropicError(writer, http.StatusBadRequest, err.Error())
+		return
 	}
 
-	resolvedModelKey, err := server.deps.Models.ResolveChatModel(request.Context(), anthropicReq.Model)
+	messages := projectedMessages
+
+	resolvedModelKey, err := server.deps.Models.ResolveChatModel(request.Context(), projectedRequest.Model)
 	if err != nil {
 		writeAnthropicError(writer, http.StatusBadRequest, "resolve model: "+err.Error())
 		return
@@ -72,7 +84,7 @@ func (server *Server) handleAnthropicMessages(writer http.ResponseWriter, reques
 		return
 	}
 
-	remoteRequest, err := server.deps.Builder.Build(openaiReq, irMessages, resolvedModelKey)
+	remoteRequest, err := server.deps.Builder.BuildCanonical(sessionCanonicalRequest, resolvedModelKey)
 	if err != nil {
 		writeAnthropicError(writer, http.StatusInternalServerError, "build request: "+err.Error())
 		return
@@ -88,20 +100,56 @@ func (server *Server) handleAnthropicMessages(writer http.ResponseWriter, reques
 	responseID := "msg_" + remoteRequest.RequestID
 
 	if !anthropicReq.Stream {
-		server.nonStreamAnthropicResponse(writer, stream, responseID, anthropicReq.Model)
+		server.nonStreamAnthropicResponse(
+			request.Context(),
+			writer,
+			stream,
+			responseID,
+			projectedRequest,
+			remoteRequest,
+			sessionID,
+			messages,
+			canonicalRequest,
+			policyResult.PostPolicyRequest,
+			sessionCanonicalRequest,
+		)
 	} else {
-		server.streamAnthropicResponse(writer, request, stream, responseID, anthropicReq.Model)
+		server.streamAnthropicResponse(
+			writer,
+			request,
+			stream,
+			responseID,
+			projectedRequest,
+			remoteRequest,
+			sessionID,
+			messages,
+			canonicalRequest,
+			policyResult.PostPolicyRequest,
+			sessionCanonicalRequest,
+		)
 	}
 }
 
 func (server *Server) nonStreamAnthropicResponse(
+	ctx context.Context,
 	writer http.ResponseWriter,
 	stream io.Reader,
-	responseID, model string,
+	responseID string,
+	request proxy.OpenAIChatRequest,
+	remoteRequest proxy.RemoteChatRequest,
+	sessionID string,
+	messages []proxy.Message,
+	prePolicyRequest proxy.CanonicalRequest,
+	postPolicyRequest proxy.CanonicalRequest,
+	sessionCanonicalRequest proxy.CanonicalRequest,
 ) {
 	var contentBuilder strings.Builder
 	var reasoningBuilder strings.Builder
-	err := proxy.ScanSSE(stream, func(event proxy.SSEEvent) error {
+	var rawSSELines []string
+	err := proxy.ScanSSEWithLines(stream, func(line string) error {
+		rawSSELines = append(rawSSELines, line)
+		return nil
+	}, func(event proxy.SSEEvent) error {
 		contentBuilder.WriteString(event.Content)
 		reasoningBuilder.WriteString(event.ReasoningContent)
 		return nil
@@ -146,9 +194,32 @@ func (server *Server) nonStreamAnthropicResponse(
 		Type:       "message",
 		Role:       "assistant",
 		Content:    blocks,
-		Model:      model,
+		Model:      request.Model,
 		StopReason: "end_turn",
 		Usage:      usage,
+	}
+	assistantContent := contentText
+	if reasoningText != "" {
+		assistantContent = "[thinking]" + reasoningText + "[/thinking]" + assistantContent
+	}
+	assistant := proxy.Message{
+		Role:    "assistant",
+		Content: assistantContent,
+	}
+	if err := server.deps.Sessions.SaveCanonicalResponse(ctx, sessionID, sessionCanonicalRequest, assistant); err == nil {
+		server.persistCanonicalExecutionRecord(
+			ctx,
+			prePolicyRequest.Protocol,
+			"/v1/messages",
+			prePolicyRequest,
+			postPolicyRequest,
+			sessionCanonicalRequest,
+			request,
+			messages,
+			assistant,
+			remoteRequest,
+			rawSSELines,
+		)
 	}
 
 	writeJSON(writer, http.StatusOK, resp)
@@ -158,7 +229,14 @@ func (server *Server) streamAnthropicResponse(
 	writer http.ResponseWriter,
 	request *http.Request,
 	stream io.Reader,
-	responseID, model string,
+	responseID string,
+	chatRequest proxy.OpenAIChatRequest,
+	remoteRequest proxy.RemoteChatRequest,
+	sessionID string,
+	messages []proxy.Message,
+	prePolicyRequest proxy.CanonicalRequest,
+	postPolicyRequest proxy.CanonicalRequest,
+	sessionCanonicalRequest proxy.CanonicalRequest,
 ) {
 	flusher, ok := writer.(http.Flusher)
 	if !ok {
@@ -178,7 +256,7 @@ func (server *Server) streamAnthropicResponse(
 			ID:    responseID,
 			Type:  "message",
 			Role:  "assistant",
-			Model: model,
+			Model: chatRequest.Model,
 			Usage: startUsage,
 		},
 	})
@@ -189,6 +267,7 @@ func (server *Server) streamAnthropicResponse(
 	var blockType string // "thinking", "text", or "tool_use"
 	var contentBuilder strings.Builder
 	var reasoningBuilder strings.Builder
+	var rawSSELines []string
 
 	closeBlock := func() {
 		if !blockStarted {
@@ -203,7 +282,10 @@ func (server *Server) streamAnthropicResponse(
 		blockType = ""
 	}
 
-	err := proxy.ScanSSE(stream, func(event proxy.SSEEvent) error {
+	err := proxy.ScanSSEWithLines(stream, func(line string) error {
+		rawSSELines = append(rawSSELines, line)
+		return nil
+	}, func(event proxy.SSEEvent) error {
 		if event.Done {
 			return nil
 		}
@@ -341,6 +423,30 @@ func (server *Server) streamAnthropicResponse(
 		Type: "message_stop",
 	})
 	flusher.Flush()
+
+	assistantContent := totalText
+	if totalReasoning != "" {
+		assistantContent = "[thinking]" + totalReasoning + "[/thinking]" + assistantContent
+	}
+	assistant := proxy.Message{
+		Role:    "assistant",
+		Content: assistantContent,
+	}
+	if err := server.deps.Sessions.SaveCanonicalResponse(request.Context(), sessionID, sessionCanonicalRequest, assistant); err == nil {
+		server.persistCanonicalExecutionRecord(
+			request.Context(),
+			prePolicyRequest.Protocol,
+			"/v1/messages",
+			prePolicyRequest,
+			postPolicyRequest,
+			sessionCanonicalRequest,
+			chatRequest,
+			messages,
+			assistant,
+			remoteRequest,
+			rawSSELines,
+		)
+	}
 }
 
 func writeAnthropicSSE(writer http.ResponseWriter, event proxy.AnthropicStreamEvent) {

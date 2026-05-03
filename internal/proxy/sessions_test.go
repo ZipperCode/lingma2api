@@ -32,3 +32,53 @@ func TestSessionStoreUsesIncomingFullHistoryAsAuthority(t *testing.T) {
 		t.Fatalf("expected 3 messages, got %d", len(merged))
 	}
 }
+
+func TestSessionStoreBuildsCanonicalRequestWithStoredTurns(t *testing.T) {
+	now := time.Unix(10, 0)
+	store := NewSessionStore(30*time.Minute, 100, func() time.Time { return now })
+	first := CanonicalRequest{
+		SchemaVersion: 1,
+		Protocol:      CanonicalProtocolAnthropic,
+		Model:         "qwen",
+		SessionID:     "s1",
+		Turns: []CanonicalTurn{
+			{
+				Role: "user",
+				Blocks: []CanonicalContentBlock{
+					{Type: CanonicalBlockImage, Text: "image placeholder"},
+				},
+			},
+		},
+	}
+	second := CanonicalRequest{
+		SchemaVersion: 1,
+		Protocol:      CanonicalProtocolOpenAI,
+		Model:         "qwen",
+		SessionID:     "s1",
+		Turns: []CanonicalTurn{
+			{Role: "user", Blocks: []CanonicalContentBlock{{Type: CanonicalBlockText, Text: "next"}}},
+		},
+	}
+
+	merged, err := store.BuildCanonicalRequest(context.Background(), "s1", first)
+	if err != nil {
+		t.Fatalf("BuildCanonicalRequest() error = %v", err)
+	}
+	if err := store.SaveCanonicalResponse(context.Background(), "s1", merged, Message{Role: "assistant", Content: "ok"}); err != nil {
+		t.Fatalf("SaveCanonicalResponse() error = %v", err)
+	}
+
+	merged, err = store.BuildCanonicalRequest(context.Background(), "s1", second)
+	if err != nil {
+		t.Fatalf("BuildCanonicalRequest() error = %v", err)
+	}
+	if len(merged.Turns) != 3 {
+		t.Fatalf("expected 3 canonical turns, got %d", len(merged.Turns))
+	}
+	if got := merged.Turns[0].Blocks[0].Type; got != CanonicalBlockImage {
+		t.Fatalf("first block type = %q, want image", got)
+	}
+	if got := merged.Protocol; got != CanonicalProtocolOpenAI {
+		t.Fatalf("merged protocol = %q, want latest incoming protocol", got)
+	}
+}

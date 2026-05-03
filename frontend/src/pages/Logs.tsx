@@ -29,6 +29,7 @@ export function Logs() {
     setReplayId(log.id);
     setReplayBody(log.downstream_req);
   };
+  const protocolLabel = (log: RequestLog) => log.ingress_protocol || (log.downstream_path === '/v1/messages' ? 'anthropic' : 'openai');
 
   return (
     <div>
@@ -55,7 +56,13 @@ export function Logs() {
           {data.items.map(log => (
             <tr key={log.id}>
               <td>{fmtTime(log.created_at)}</td>
-              <td>{log.model}{log.model !== log.mapped_model && ` → ${log.mapped_model}`}</td>
+              <td>
+                <div>{log.model}{log.model !== log.mapped_model && ` → ${log.mapped_model}`}</div>
+                <div style={{ display: 'flex', gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
+                  <span className="badge">{protocolLabel(log)}</span>
+                  {log.canonical_record && <span className="badge badge-success">canonical</span>}
+                </div>
+              </td>
               <td><span className={`badge ${log.status === 'success' ? 'badge-success' : 'badge-error'}`}>{log.status}</span></td>
               <td>{log.ttft_ms > 0 ? `${log.ttft_ms}ms` : '-'}</td>
               <td>{log.total_tokens > 0 ? log.total_tokens.toLocaleString() : '-'}</td>

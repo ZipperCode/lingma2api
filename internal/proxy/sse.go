@@ -114,6 +114,34 @@ func ScanSSE(reader io.Reader, onEvent func(SSEEvent) error) error {
 	return scanner.Err()
 }
 
+func ScanSSEWithLines(reader io.Reader, onLine func(string) error, onEvent func(SSEEvent) error) error {
+	scanner := bufio.NewScanner(reader)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if onLine != nil {
+			if err := onLine(line); err != nil {
+				return err
+			}
+		}
+		event, ok, err := ParseSSELine(line)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			continue
+		}
+		if err := onEvent(event); err != nil {
+			return err
+		}
+		if event.Done {
+			return nil
+		}
+	}
+	return scanner.Err()
+}
+
 func CollectSSEContent(reader io.Reader) (string, error) {
 	var builder strings.Builder
 	err := ScanSSE(reader, func(event SSEEvent) error {
@@ -124,4 +152,23 @@ func CollectSSEContent(reader io.Reader) (string, error) {
 		return "", err
 	}
 	return builder.String(), nil
+}
+
+func CollectSSEContentWithLines(reader io.Reader) (string, []string, error) {
+	var builder strings.Builder
+	var lines []string
+	err := ScanSSEWithLines(reader, func(line string) error {
+		lines = append(lines, line)
+		return nil
+	}, func(event SSEEvent) error {
+		builder.WriteString(event.Content)
+		return nil
+	})
+	if err != nil {
+		return "", nil, err
+	}
+	if lines == nil {
+		lines = []string{}
+	}
+	return builder.String(), lines, nil
 }

@@ -5,3 +5,5 @@ configs/session_key.txt
 auth/credentials_remote.json
 lingma2api
 server.log
+.ace-tool/
+.worktrees/

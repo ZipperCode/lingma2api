@@ -49,11 +49,11 @@ func (fakeModels) Status() proxy.ModelStatus {
 
 type fakeSessions struct{}
 
-func (fakeSessions) BuildMessages(_ context.Context, _ string, messages []proxy.Message) ([]proxy.Message, error) {
-	return messages, nil
+func (fakeSessions) BuildCanonicalRequest(_ context.Context, _ string, request proxy.CanonicalRequest) (proxy.CanonicalRequest, error) {
+	return request, nil
 }
 
-func (fakeSessions) SaveResponse(context.Context, string, []proxy.Message, proxy.Message) error {
+func (fakeSessions) SaveCanonicalResponse(context.Context, string, proxy.CanonicalRequest, proxy.Message) error {
 	return nil
 }
 
@@ -75,7 +75,7 @@ func (transport fakeTransport) StreamChat(context.Context, proxy.RemoteChatReque
 
 type fakeBuilder struct{}
 
-func (fakeBuilder) Build(request proxy.OpenAIChatRequest, _ []proxy.Message, modelKey string) (proxy.RemoteChatRequest, error) {
+func (fakeBuilder) BuildCanonical(request proxy.CanonicalRequest, modelKey string) (proxy.RemoteChatRequest, error) {
 	return proxy.RemoteChatRequest{
 		Path:      proxy.ChatPath,
 		Query:     proxy.ChatQuery,

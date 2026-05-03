@@ -4,7 +4,7 @@ server:
   admin_token: ""
 
 credential:
-  auth_file: "/Users/Zipper/Github/lingma-analysis/lingma2api/auth/credentials.json"
+  auth_file: "./auth/credentials.json"
 
 session:
   ttl_minutes: 30

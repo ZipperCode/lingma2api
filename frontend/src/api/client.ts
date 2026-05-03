@@ -1,4 +1,14 @@
-import type { LogListResult, RequestLog, DashboardData, AccountData, ModelMapping, BootstrapResponse } from '../types';
+import type {
+  LogListResult,
+  RequestLog,
+  DashboardData,
+  AccountData,
+  ModelMapping,
+  BootstrapResponse,
+  PolicyRule,
+  PolicyTestInput,
+  PolicyTestResult,
+} from '../types';
 
 function getToken(): string {
   return localStorage.getItem('admin_token') || '';
@@ -53,6 +63,17 @@ export const testMapping = (model: string) =>
   request<{ matched: boolean; rule_name?: string; rule_id?: number; target: string; input_model: string }>(
     '/admin/mappings/test', { method: 'POST', body: JSON.stringify({ model }) }
   );
+
+// Policies
+export const getPolicies = () => request<PolicyRule[]>('/admin/policies');
+export const createPolicy = (policy: Partial<PolicyRule>) =>
+  request<PolicyRule>('/admin/policies', { method: 'POST', body: JSON.stringify(policy) });
+export const updatePolicy = (id: number, policy: Partial<PolicyRule>) =>
+  request<PolicyRule>(`/admin/policies/${id}`, { method: 'PUT', body: JSON.stringify(policy) });
+export const deletePolicy = (id: number) =>
+  request<{ status: string }>(`/admin/policies/${id}`, { method: 'DELETE' });
+export const testPolicy = (input: PolicyTestInput) =>
+  request<PolicyTestResult>('/admin/policies/test', { method: 'POST', body: JSON.stringify(input) });
 
 // Settings
 export const getSettings = () => request<Record<string, string>>('/admin/settings');

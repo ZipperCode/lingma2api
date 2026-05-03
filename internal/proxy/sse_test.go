@@ -1,6 +1,9 @@
 package proxy
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestParseSSELineExtractsDeltaContent(t *testing.T) {
 	line := `data:{"body":"{\"choices\":[{\"delta\":{\"content\":\"Hi\"}}]}","statusCodeValue":200}`
@@ -72,5 +75,28 @@ func TestParseSSELineMergesToolCallFragmentArguments(t *testing.T) {
 	arg2 := event2.ToolCalls[0].Function.Arguments
 	if len(arg2) == 0 {
 		t.Fatal("line2: expected non-empty arguments fragment")
+	}
+}
+
+func TestCollectSSEContentWithLinesCapturesRawSSELines(t *testing.T) {
+	input := strings.NewReader(strings.Join([]string{
+		`data:{"body":"{\"choices\":[{\"delta\":{\"content\":\"Hel\"}}]}","statusCodeValue":200}`,
+		`: keep-alive`,
+		`data:{"body":"{\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}","statusCodeValue":200}`,
+		`data:[DONE]`,
+	}, "\n"))
+
+	content, lines, err := CollectSSEContentWithLines(input)
+	if err != nil {
+		t.Fatalf("CollectSSEContentWithLines() error = %v", err)
+	}
+	if content != "Hello" {
+		t.Fatalf("content = %q, want Hello", content)
+	}
+	if len(lines) != 4 {
+		t.Fatalf("expected 4 raw lines, got %#v", lines)
+	}
+	if lines[1] != ": keep-alive" {
+		t.Fatalf("expected raw keep-alive line, got %#v", lines)
 	}
 }

@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"sort"
 	"time"
 )
 
@@ -37,6 +38,13 @@ func (s *Store) GetDashboardData(ctx context.Context, rangeStr string) (Dashboar
 	granularity := granularityForRange(hours)
 
 	data := DashboardData{}
+	canonicalRecords, err := s.ListCanonicalExecutionRecords(ctx, 0)
+	if err != nil {
+		return data, err
+	}
+	if len(canonicalRecords) > 0 {
+		return s.getCanonicalDashboardData(canonicalRecords, cutoff, granularity), nil
+	}
 
 	row := s.db.QueryRowContext(ctx,
 		`SELECT COUNT(*), COALESCE(SUM(CASE WHEN status='success' THEN 1 ELSE 0 END)*100.0/COUNT(*),0),
@@ -125,6 +133,23 @@ func (s *Store) GetTokenStats(ctx context.Context) (today, week, total int, err 
 	now := time.Now()
 	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	weekStart := todayStart.AddDate(0, 0, -7)
+	canonicalRecords, err := s.ListCanonicalExecutionRecords(ctx, 0)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	if len(canonicalRecords) > 0 {
+		for _, record := range canonicalRecords {
+			_, _, tokens := CanonicalRecordTokenCounts(record)
+			total += tokens
+			if !record.CreatedAt.Before(weekStart) {
+				week += tokens
+			}
+			if !record.CreatedAt.Before(todayStart) {
+				today += tokens
+			}
+		}
+		return today, week, total, nil
+	}
 
 	if err = s.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(total_tokens),0) FROM request_logs WHERE created_at>=?`, todayStart).Scan(&today); err != nil {
 		return 0, 0, 0, err
@@ -136,6 +161,107 @@ func (s *Store) GetTokenStats(ctx context.Context) (today, week, total int, err 
 		return 0, 0, 0, err
 	}
 	return
+}
+
+func (s *Store) getCanonicalDashboardData(records []CanonicalExecutionRecordRow, cutoff time.Time, gran string) DashboardData {
+	data := DashboardData{
+		SuccessRateSeries: []TimeSeriesPoint{},
+		TokenSeries:       []TimeSeriesPoint{},
+		ModelDistribution: []ModelDistPoint{},
+	}
+	type rateBucket struct {
+		total   int
+		success int
+	}
+	type tokenBucket struct {
+		prompt     int
+		completion int
+	}
+	rateBuckets := map[time.Time]*rateBucket{}
+	tokenBuckets := map[time.Time]*tokenBucket{}
+	modelCounts := map[string]int{}
+	var ttftSum int
+	for _, record := range records {
+		if record.CreatedAt.Before(cutoff) {
+			continue
+		}
+		data.Stats.TotalRequests++
+		if CanonicalRecordStatus(record) == "success" {
+			data.Stats.SuccessRate += 1
+		}
+		if record.Sidecar != nil {
+			ttftSum += record.Sidecar.TTFTMs
+		}
+		promptTokens, completionTokens, totalTokens := CanonicalRecordTokenCounts(record)
+		data.Stats.TotalTokens += totalTokens
+		bucketTime := canonicalBucketTime(record.CreatedAt, gran)
+		if rateBuckets[bucketTime] == nil {
+			rateBuckets[bucketTime] = &rateBucket{}
+		}
+		rateBuckets[bucketTime].total++
+		if CanonicalRecordStatus(record) == "success" {
+			rateBuckets[bucketTime].success++
+		}
+		if tokenBuckets[bucketTime] == nil {
+			tokenBuckets[bucketTime] = &tokenBucket{}
+		}
+		tokenBuckets[bucketTime].prompt += promptTokens
+		tokenBuckets[bucketTime].completion += completionTokens
+		modelCounts[CanonicalRecordMappedModel(record)]++
+	}
+	if data.Stats.TotalRequests > 0 {
+		data.Stats.SuccessRate = data.Stats.SuccessRate * 100 / float64(data.Stats.TotalRequests)
+		data.Stats.AvgTTFTMs = ttftSum / data.Stats.TotalRequests
+	}
+	for bucketTime, bucket := range rateBuckets {
+		data.SuccessRateSeries = append(data.SuccessRateSeries, TimeSeriesPoint{
+			Time: bucketTime,
+			Rate: float64(bucket.success) * 100 / float64(bucket.total),
+		})
+	}
+	for bucketTime, bucket := range tokenBuckets {
+		data.TokenSeries = append(data.TokenSeries, TimeSeriesPoint{
+			Time:       bucketTime,
+			Prompt:     bucket.prompt,
+			Completion: bucket.completion,
+		})
+	}
+	for model, count := range modelCounts {
+		data.ModelDistribution = append(data.ModelDistribution, ModelDistPoint{
+			Model: model,
+			Count: count,
+		})
+	}
+	sort.Slice(data.SuccessRateSeries, func(i, j int) bool {
+		return data.SuccessRateSeries[i].Time.Before(data.SuccessRateSeries[j].Time)
+	})
+	sort.Slice(data.TokenSeries, func(i, j int) bool {
+		return data.TokenSeries[i].Time.Before(data.TokenSeries[j].Time)
+	})
+	sort.Slice(data.ModelDistribution, func(i, j int) bool {
+		if data.ModelDistribution[i].Count == data.ModelDistribution[j].Count {
+			return data.ModelDistribution[i].Model < data.ModelDistribution[j].Model
+		}
+		return data.ModelDistribution[i].Count > data.ModelDistribution[j].Count
+	})
+	if len(data.ModelDistribution) > 10 {
+		data.ModelDistribution = data.ModelDistribution[:10]
+	}
+	return data
+}
+
+func canonicalBucketTime(t time.Time, gran string) time.Time {
+	t = t.UTC()
+	switch gran {
+	case "%Y-%m-%dT%H:%M":
+		return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), 0, 0, time.UTC)
+	case "%Y-%m-%dT%H:00":
+		return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), 0, 0, 0, time.UTC)
+	case "%Y-%m-%dT00:00":
+		return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
+	default:
+		return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
+	}
 }
 
 func rangeToHours(r string) int {

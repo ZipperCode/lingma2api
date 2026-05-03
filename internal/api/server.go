@@ -32,8 +32,8 @@ type ModelService interface {
 }
 
 type SessionStore interface {
-	BuildMessages(context.Context, string, []proxy.Message) ([]proxy.Message, error)
-	SaveResponse(context.Context, string, []proxy.Message, proxy.Message) error
+	BuildCanonicalRequest(context.Context, string, proxy.CanonicalRequest) (proxy.CanonicalRequest, error)
+	SaveCanonicalResponse(context.Context, string, proxy.CanonicalRequest, proxy.Message) error
 	Delete(context.Context, string) error
 	List(context.Context) ([]proxy.SessionState, error)
 	SweepExpired(context.Context) error
@@ -44,7 +44,7 @@ type ChatTransport interface {
 }
 
 type RequestBuilder interface {
-	Build(proxy.OpenAIChatRequest, []proxy.Message, string) (proxy.RemoteChatRequest, error)
+	BuildCanonical(proxy.CanonicalRequest, string) (proxy.RemoteChatRequest, error)
 }
 
 type Dependencies struct {
@@ -129,6 +129,13 @@ func NewServer(deps Dependencies, store *db.Store) http.Handler {
 			server.handleAdminLogsGet(w, r)
 		}
 	})
+	mux.HandleFunc("/admin/logs/", func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/replay") {
+			server.handleAdminLogsReplay(w, r)
+		} else {
+			server.handleAdminLogsGet(w, r)
+		}
+	})
 	mux.HandleFunc("/admin/logs/cleanup", server.handleAdminLogsCleanup)
 	mux.HandleFunc("/admin/logs/export", server.handleAdminLogsExport)
 	mux.HandleFunc("/admin/stats/export", server.handleAdminStatsExport)
@@ -150,6 +157,28 @@ func NewServer(deps Dependencies, store *db.Store) http.Handler {
 			server.handleAdminMappingsUpdate(w, r)
 		} else if r.Method == http.MethodDelete {
 			server.handleAdminMappingsDelete(w, r)
+		} else {
+			writeMethodNotAllowed(w, "PUT, DELETE")
+		}
+	})
+	mux.HandleFunc("/admin/policies", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			server.handleAdminPoliciesList(w, r)
+		} else if r.Method == http.MethodPost {
+			server.handleAdminPoliciesCreate(w, r)
+		} else {
+			writeMethodNotAllowed(w, "GET, POST")
+		}
+	})
+	mux.HandleFunc("/admin/policies/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/admin/policies/test" {
+			server.handleAdminPoliciesTest(w, r)
+			return
+		}
+		if r.Method == http.MethodPut {
+			server.handleAdminPoliciesUpdate(w, r)
+		} else if r.Method == http.MethodDelete {
+			server.handleAdminPoliciesDelete(w, r)
 		} else {
 			writeMethodNotAllowed(w, "PUT, DELETE")
 		}
@@ -225,17 +254,36 @@ func (server *Server) handleChatCompletions(writer http.ResponseWriter, request 
 		return
 	}
 
-	sessionID := strings.TrimSpace(chatRequest.ExtraBody.SessionID)
-	if headerSession := strings.TrimSpace(request.Header.Get("X-Session-Id")); headerSession != "" {
-		sessionID = headerSession
+	sessionID := requestSessionID(request, chatRequest.ExtraBody.SessionID)
+	canonicalRequest, err := proxy.CanonicalizeOpenAIRequest(chatRequest, sessionID)
+	if err != nil {
+		writeOpenAIError(writer, http.StatusBadRequest, err.Error())
+		return
 	}
+	attachCanonicalRequestMetadata(&canonicalRequest, request.Header)
 
-	messages, err := server.deps.Sessions.BuildMessages(request.Context(), sessionID, chatRequest.Messages)
+	policyResult, err := server.evaluateCanonicalRequest(request.Context(), canonicalRequest)
 	if err != nil {
 		writeMappedError(writer, err)
 		return
 	}
-	modelKey, err := server.deps.Models.ResolveChatModel(request.Context(), chatRequest.Model)
+	sessionCanonicalRequest, err := server.deps.Sessions.BuildCanonicalRequest(request.Context(), sessionID, policyResult.PostPolicyRequest)
+	if err != nil {
+		writeMappedError(writer, err)
+		return
+	}
+	projectedRequest, projectedMessages, err := proxy.ProjectCanonicalToOpenAIRequest(sessionCanonicalRequest)
+	if err != nil {
+		writeOpenAIError(writer, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := validateChatRequest(&projectedRequest); err != nil {
+		writeOpenAIError(writer, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	messages := projectedMessages
+	modelKey, err := server.deps.Models.ResolveChatModel(request.Context(), projectedRequest.Model)
 	if err != nil {
 		writeMappedError(writer, err)
 		return
@@ -245,7 +293,7 @@ func (server *Server) handleChatCompletions(writer http.ResponseWriter, request 
 		writeMappedError(writer, err)
 		return
 	}
-	remoteRequest, err := server.deps.Builder.Build(chatRequest, messages, modelKey)
+	remoteRequest, err := server.deps.Builder.BuildCanonical(sessionCanonicalRequest, modelKey)
 	if err != nil {
 		writeMappedError(writer, err)
 		return
@@ -257,33 +305,73 @@ func (server *Server) handleChatCompletions(writer http.ResponseWriter, request 
 	}
 	defer stream.Close()
 
-	if chatRequest.Stream {
-		server.streamChatResponse(writer, request, chatRequest, remoteRequest, sessionID, messages, stream)
+	if projectedRequest.Stream {
+		server.streamChatResponse(
+			writer,
+			request,
+			projectedRequest,
+			remoteRequest,
+			sessionID,
+			messages,
+			stream,
+			canonicalRequest,
+			policyResult.PostPolicyRequest,
+			sessionCanonicalRequest,
+		)
 		return
 	}
-	server.writeNonStreamResponse(writer, chatRequest, remoteRequest, sessionID, messages, stream)
+	server.writeNonStreamResponse(
+		request.Context(),
+		writer,
+		projectedRequest,
+		remoteRequest,
+		sessionID,
+		messages,
+		stream,
+		canonicalRequest,
+		policyResult.PostPolicyRequest,
+		sessionCanonicalRequest,
+	)
 }
 
 func (server *Server) writeNonStreamResponse(
+	ctx context.Context,
 	writer http.ResponseWriter,
 	request proxy.OpenAIChatRequest,
 	remoteRequest proxy.RemoteChatRequest,
 	sessionID string,
 	messages []proxy.Message,
 	stream io.Reader,
+	prePolicyRequest proxy.CanonicalRequest,
+	postPolicyRequest proxy.CanonicalRequest,
+	sessionCanonicalRequest proxy.CanonicalRequest,
 ) {
-	content, err := proxy.CollectSSEContent(stream)
+	content, rawSSELines, err := proxy.CollectSSEContentWithLines(stream)
 	if err != nil {
 		writeMappedError(writer, err)
 		return
 	}
-	if err := server.deps.Sessions.SaveResponse(context.Background(), sessionID, messages, proxy.Message{
+	assistant := proxy.Message{
 		Role:    "assistant",
 		Content: content,
-	}); err != nil {
+	}
+	if err := server.deps.Sessions.SaveCanonicalResponse(context.Background(), sessionID, sessionCanonicalRequest, assistant); err != nil {
 		writeMappedError(writer, err)
 		return
 	}
+	server.persistCanonicalExecutionRecord(
+		ctx,
+		prePolicyRequest.Protocol,
+		"/v1/chat/completions",
+		prePolicyRequest,
+		postPolicyRequest,
+		sessionCanonicalRequest,
+		request,
+		messages,
+		assistant,
+		remoteRequest,
+		rawSSELines,
+	)
 
 	finishReason := "stop"
 	writeJSON(writer, http.StatusOK, chatCompletionResponse{
@@ -312,6 +400,9 @@ func (server *Server) streamChatResponse(
 	sessionID string,
 	messages []proxy.Message,
 	stream io.Reader,
+	prePolicyRequest proxy.CanonicalRequest,
+	postPolicyRequest proxy.CanonicalRequest,
+	sessionCanonicalRequest proxy.CanonicalRequest,
 ) {
 	flusher, ok := writer.(http.Flusher)
 	if !ok {
@@ -377,7 +468,11 @@ func (server *Server) streamChatResponse(
 	}
 
 	var contentBuilder strings.Builder
-	err := proxy.ScanSSE(stream, func(event proxy.SSEEvent) error {
+	var rawSSELines []string
+	err := proxy.ScanSSEWithLines(stream, func(line string) error {
+		rawSSELines = append(rawSSELines, line)
+		return nil
+	}, func(event proxy.SSEEvent) error {
 		if event.Done {
 			return nil
 		}
@@ -451,12 +546,26 @@ func (server *Server) streamChatResponse(
 		return
 	}
 
-	if err := server.deps.Sessions.SaveResponse(request.Context(), sessionID, messages, proxy.Message{
+	assistant := proxy.Message{
 		Role:    "assistant",
 		Content: contentBuilder.String(),
-	}); err != nil {
+	}
+	if err := server.deps.Sessions.SaveCanonicalResponse(request.Context(), sessionID, sessionCanonicalRequest, assistant); err != nil {
 		return
 	}
+	server.persistCanonicalExecutionRecord(
+		request.Context(),
+		prePolicyRequest.Protocol,
+		"/v1/chat/completions",
+		prePolicyRequest,
+		postPolicyRequest,
+		sessionCanonicalRequest,
+		chatRequest,
+		messages,
+		assistant,
+		remoteRequest,
+		rawSSELines,
+	)
 
 	finishReason := "stop"
 	_ = writeSSEChunk(writer, chatCompletionResponse{

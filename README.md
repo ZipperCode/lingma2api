@@ -2,6 +2,92 @@
 
 `lingma2api` 是一个最小 OpenAI 兼容代理，对外暴露 `/v1/models` 与 `/v1/chat/completions`，对内复用当前仓库已经验证的 Lingma 远端 HTTP/SSE 契约。
 
+## 一键启动
+
+仓库根目录提供了跨平台启动脚本，前提：本机已安装 `go`、`node`、`npm`。
+
+### 生产模式（构建并运行）
+
+会构建前端、把 `frontend-dist/` 嵌入 Go 二进制后启动单进程服务。
+
+```powershell
+# Windows (PowerShell)
+.\start.ps1
+```
+
+```bash
+# Linux / macOS
+chmod +x ./start.sh    # 首次执行
+./start.sh
+```
+
+启动后访问：
+
+- 控制台：http://127.0.0.1:8080
+- OpenAI：http://127.0.0.1:8080/v1
+- Anthropic：http://127.0.0.1:8080/v1/messages
+
+可选参数：
+
+```powershell
+.\start.ps1 -Config .\config.yaml   # 指定配置
+.\start.ps1 -SkipFrontend            # 复用现有 frontend-dist
+```
+
+```bash
+./start.sh -c ./config.yaml
+./start.sh --skip-frontend
+```
+
+### 开发模式（前端热更新 + 后端 go run）
+
+并行启动 Vite dev server（:3000，热更新）与 Go 后端（:8080），Vite 已配置 `/v1` 与 `/admin` 代理到后端，开发期间访问 :3000 即可。
+
+```powershell
+# Windows (PowerShell) — Vite 在新窗口，后端在当前窗口
+.\dev.ps1
+```
+
+```bash
+# Linux / macOS
+chmod +x ./dev.sh    # 首次执行
+./dev.sh
+```
+
+按 `Ctrl+C` 停止后端，脚本会自动清理 Vite 进程。
+
+### 准备凭据
+
+启动脚本只负责构建+运行，**不会**主动获取凭据。两种方式任选其一：
+
+**方式 A：从本机 Lingma 客户端一键导入**（最快，前提是本机已登录过 Lingma）
+
+```powershell
+# Windows
+.\import-auth.ps1
+.\import-auth.ps1 -Force                              # 已存在直接覆盖
+.\import-auth.ps1 -LingmaDir D:\custom\.lingma
+```
+
+```bash
+# Linux / macOS
+chmod +x ./import-auth.sh    # 首次执行
+./import-auth.sh
+./import-auth.sh --force
+./import-auth.sh -d ~/.lingma -o ./auth/credentials.json
+```
+
+脚本会读取 `~/.lingma/cache/`，派生凭据并写入 `./auth/credentials.json`，仅作一次性迁移。
+
+**方式 B：通过 OAuth 全新授权**（无本机 Lingma 时使用）
+
+参考下文 [Bootstrap 说明](#bootstrap-说明) 走完整 OAuth 流程。
+
+完成后：
+
+1. 确认 `config.yaml` 中 `credential.auth_file` 指向正确路径
+2. 运行 `.\start.ps1` / `./start.sh` 启动
+
 ## 当前能力
 
 - `GET /v1/models`

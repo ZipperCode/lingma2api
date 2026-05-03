@@ -3,6 +3,7 @@ package proxy
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -52,6 +53,99 @@ type Message struct {
 	Name       string     `json:"name,omitempty"`
 	ToolCallID string     `json:"tool_call_id,omitempty"`
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
+}
+
+type CanonicalProtocol string
+
+const (
+	CanonicalProtocolOpenAI    CanonicalProtocol = "openai"
+	CanonicalProtocolAnthropic CanonicalProtocol = "anthropic"
+)
+
+type CanonicalBlockType string
+
+const (
+	CanonicalBlockText       CanonicalBlockType = "text"
+	CanonicalBlockReasoning  CanonicalBlockType = "reasoning"
+	CanonicalBlockToolCall   CanonicalBlockType = "tool_call"
+	CanonicalBlockToolResult CanonicalBlockType = "tool_result"
+	CanonicalBlockImage      CanonicalBlockType = "image"
+	CanonicalBlockDocument   CanonicalBlockType = "document"
+)
+
+type CanonicalToolCall struct {
+	ID        string `json:"id,omitempty"`
+	Name      string `json:"name,omitempty"`
+	Arguments string `json:"arguments,omitempty"`
+}
+
+type CanonicalToolDefinition struct {
+	Type        string          `json:"type,omitempty"`
+	Name        string          `json:"name,omitempty"`
+	Description string          `json:"description,omitempty"`
+	Parameters  json.RawMessage `json:"parameters,omitempty"`
+}
+
+type CanonicalToolResult struct {
+	ToolCallID string `json:"tool_call_id,omitempty"`
+	Content    string `json:"content,omitempty"`
+}
+
+type CanonicalContentBlock struct {
+	Type       CanonicalBlockType   `json:"type"`
+	Text       string               `json:"text,omitempty"`
+	Data       json.RawMessage      `json:"data,omitempty"`
+	ToolCall   *CanonicalToolCall   `json:"tool_call,omitempty"`
+	ToolResult *CanonicalToolResult `json:"tool_result,omitempty"`
+	Metadata   map[string]any       `json:"metadata,omitempty"`
+}
+
+type CanonicalTurn struct {
+	Role   string                  `json:"role"`
+	Name   string                  `json:"name,omitempty"`
+	Blocks []CanonicalContentBlock `json:"blocks,omitempty"`
+}
+
+type CanonicalRequest struct {
+	SchemaVersion int                       `json:"schema_version"`
+	Protocol      CanonicalProtocol         `json:"protocol"`
+	Model         string                    `json:"model"`
+	Stream        bool                      `json:"stream"`
+	Temperature   *float64                  `json:"temperature,omitempty"`
+	Tools         []CanonicalToolDefinition `json:"tools,omitempty"`
+	ToolChoice    any                       `json:"tool_choice,omitempty"`
+	HasTools      bool                      `json:"has_tools"`
+	HasReasoning  bool                      `json:"has_reasoning"`
+	SessionID     string                    `json:"session_id,omitempty"`
+	Metadata      map[string]any            `json:"metadata,omitempty"`
+	Turns         []CanonicalTurn           `json:"turns"`
+}
+
+type CanonicalSessionSnapshot struct {
+	SchemaVersion   int               `json:"schema_version"`
+	SessionID       string            `json:"session_id"`
+	IngressProtocol CanonicalProtocol `json:"ingress_protocol,omitempty"`
+	Turns           []CanonicalTurn   `json:"turns,omitempty"`
+	UpdatedAt       time.Time         `json:"updated_at"`
+}
+
+type CanonicalExecutionSidecar struct {
+	SchemaVersion int            `json:"schema_version"`
+	RawSSELines   []string       `json:"raw_sse_lines,omitempty"`
+	TTFTMs        int            `json:"ttft_ms,omitempty"`
+	Metadata      map[string]any `json:"metadata,omitempty"`
+}
+
+type CanonicalExecutionRecord struct {
+	SchemaVersion     int                        `json:"schema_version"`
+	IngressProtocol   CanonicalProtocol          `json:"ingress_protocol"`
+	IngressEndpoint   string                     `json:"ingress_endpoint"`
+	PrePolicyRequest  CanonicalRequest           `json:"pre_policy_request"`
+	PostPolicyRequest CanonicalRequest           `json:"post_policy_request"`
+	Session           *CanonicalSessionSnapshot  `json:"session,omitempty"`
+	SouthboundRequest string                     `json:"southbound_request,omitempty"`
+	Sidecar           *CanonicalExecutionSidecar `json:"sidecar,omitempty"`
+	CreatedAt         time.Time                  `json:"created_at"`
 }
 
 type ExtraBody struct {
@@ -132,10 +226,11 @@ type CredentialStatus struct {
 }
 
 type SessionState struct {
-	ID           string    `json:"id"`
-	Messages     []Message `json:"messages,omitempty"`
-	MessageCount int       `json:"message_count"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID           string          `json:"id"`
+	Messages     []Message       `json:"messages,omitempty"`
+	Turns        []CanonicalTurn `json:"turns,omitempty"`
+	MessageCount int             `json:"message_count"`
+	UpdatedAt    time.Time       `json:"updated_at"`
 }
 
 type ModelStatus struct {

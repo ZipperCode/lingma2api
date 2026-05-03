@@ -83,6 +83,478 @@ func ConvertIRToAnthropic(ir []Message) []ContentBlock {
 	return blocks
 }
 
+func CanonicalizeOpenAIRequest(req OpenAIChatRequest, sessionID string) (CanonicalRequest, error) {
+	if sessionID == "" {
+		sessionID = strings.TrimSpace(req.ExtraBody.SessionID)
+	}
+
+	turns := make([]CanonicalTurn, 0, len(req.Messages))
+	for _, message := range req.Messages {
+		turn := CanonicalTurn{
+			Role: message.Role,
+			Name: message.Name,
+		}
+		switch message.Role {
+		case "system", "user":
+			if message.Content != "" {
+				turn.Blocks = append(turn.Blocks, CanonicalContentBlock{
+					Type: CanonicalBlockText,
+					Text: message.Content,
+				})
+			}
+		case "assistant":
+			if message.Content != "" {
+				turn.Blocks = append(turn.Blocks, CanonicalContentBlock{
+					Type: CanonicalBlockText,
+					Text: message.Content,
+				})
+			}
+			for _, toolCall := range message.ToolCalls {
+				turn.Blocks = append(turn.Blocks, CanonicalContentBlock{
+					Type: CanonicalBlockToolCall,
+					ToolCall: &CanonicalToolCall{
+						ID:        toolCall.ID,
+						Name:      toolCall.Function.Name,
+						Arguments: toolCall.Function.Arguments,
+					},
+				})
+			}
+		case "tool":
+			turn.Blocks = append(turn.Blocks, CanonicalContentBlock{
+				Type: CanonicalBlockToolResult,
+				ToolResult: &CanonicalToolResult{
+					ToolCallID: message.ToolCallID,
+					Content:    message.Content,
+				},
+			})
+		default:
+			return CanonicalRequest{}, fmt.Errorf("unsupported role %q", message.Role)
+		}
+		turns = append(turns, turn)
+	}
+
+	return CanonicalRequest{
+		SchemaVersion: 1,
+		Protocol:      CanonicalProtocolOpenAI,
+		Model:         req.Model,
+		Stream:        req.Stream,
+		Temperature:   req.Temperature,
+		Tools:         canonicalToolDefinitions(req.Tools),
+		ToolChoice:    req.ToolChoice,
+		HasTools:      len(req.Tools) > 0,
+		HasReasoning:  req.Reasoning,
+		SessionID:     sessionID,
+		Turns:         turns,
+	}, nil
+}
+
+func CanonicalizeAnthropicRequest(req AnthropicMessagesRequest, sessionID string) (CanonicalRequest, error) {
+	if req.Model == "" {
+		return CanonicalRequest{}, fmt.Errorf("model is required")
+	}
+	if sessionID == "" {
+		sessionID = metadataString(parseMetadataMap(req.Metadata), "session_id")
+	}
+
+	turns := make([]CanonicalTurn, 0, len(req.Messages)+1)
+	systemTurn, err := canonicalSystemTurn(req.System)
+	if err != nil {
+		return CanonicalRequest{}, fmt.Errorf("parse system: %w", err)
+	}
+	if systemTurn != nil {
+		turns = append(turns, *systemTurn)
+	}
+
+	for _, message := range req.Messages {
+		turn, err := canonicalizeAnthropicTurn(message)
+		if err != nil {
+			return CanonicalRequest{}, err
+		}
+		turns = append(turns, turn)
+	}
+
+	return CanonicalRequest{
+		SchemaVersion: 1,
+		Protocol:      CanonicalProtocolAnthropic,
+		Model:         req.Model,
+		Stream:        req.Stream,
+		Tools:         canonicalToolDefinitions(req.Tools),
+		HasTools:      len(req.Tools) > 0,
+		HasReasoning:  req.Thinking == nil || req.Thinking.Type != "disabled",
+		SessionID:     sessionID,
+		Metadata:      parseMetadataMap(req.Metadata),
+		Turns:         turns,
+	}, nil
+}
+
+func ProjectCanonicalToOpenAIRequest(req CanonicalRequest) (OpenAIChatRequest, []Message, error) {
+	messages, err := projectCanonicalTurnsToLegacyMessages(req.Turns)
+	if err != nil {
+		return OpenAIChatRequest{}, nil, err
+	}
+
+	projected := OpenAIChatRequest{
+		Model:       req.Model,
+		Messages:    cloneMessages(messages),
+		Stream:      req.Stream,
+		Temperature: req.Temperature,
+		ExtraBody: ExtraBody{
+			SessionID: req.SessionID,
+		},
+		Tools:      projectCanonicalToolDefinitions(req.Tools),
+		ToolChoice: req.ToolChoice,
+		Reasoning:  req.HasReasoning,
+	}
+	if !req.HasTools {
+		projected.Tools = nil
+		projected.ToolChoice = nil
+	}
+	return projected, messages, nil
+}
+
+func canonicalSystemTurn(raw json.RawMessage) (*CanonicalTurn, error) {
+	raw = json.RawMessage(strings.TrimSpace(string(raw)))
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	if raw[0] == '"' {
+		var text string
+		if err := json.Unmarshal(raw, &text); err != nil {
+			return nil, err
+		}
+		if text == "" {
+			return nil, nil
+		}
+		return &CanonicalTurn{
+			Role: "system",
+			Blocks: []CanonicalContentBlock{{
+				Type: CanonicalBlockText,
+				Text: text,
+			}},
+		}, nil
+	}
+	if raw[0] != '[' {
+		return nil, fmt.Errorf("unsupported system format: %s", string(raw[:min(60, len(raw))]))
+	}
+
+	var blocks []SystemBlock
+	if err := json.Unmarshal(raw, &blocks); err != nil {
+		return nil, fmt.Errorf("unmarshal system blocks: %w", err)
+	}
+	turn := &CanonicalTurn{Role: "system"}
+	for _, block := range blocks {
+		if block.Type != "text" || block.Text == "" {
+			continue
+		}
+		turn.Blocks = append(turn.Blocks, CanonicalContentBlock{
+			Type: CanonicalBlockText,
+			Text: block.Text,
+		})
+	}
+	if len(turn.Blocks) == 0 {
+		return nil, nil
+	}
+	return turn, nil
+}
+
+func canonicalizeAnthropicTurn(message AnthropicMessage) (CanonicalTurn, error) {
+	if message.Role != "user" && message.Role != "assistant" {
+		return CanonicalTurn{}, fmt.Errorf("unsupported role %q", message.Role)
+	}
+
+	turn := CanonicalTurn{
+		Role:   message.Role,
+		Blocks: make([]CanonicalContentBlock, 0, len(message.Content)),
+	}
+	for _, block := range message.Content {
+		switch block.Type {
+		case "text":
+			turn.Blocks = append(turn.Blocks, CanonicalContentBlock{
+				Type: CanonicalBlockText,
+				Text: block.Text,
+			})
+		case "thinking":
+			metadata := map[string]any{}
+			if block.Signature != "" {
+				metadata["signature"] = block.Signature
+			}
+			if len(metadata) == 0 {
+				metadata = nil
+			}
+			turn.Blocks = append(turn.Blocks, CanonicalContentBlock{
+				Type:     CanonicalBlockReasoning,
+				Text:     block.Thinking,
+				Metadata: metadata,
+			})
+		case "tool_use":
+			args := string(block.Input)
+			if !json.Valid(block.Input) {
+				args = "{}"
+			}
+			turn.Blocks = append(turn.Blocks, CanonicalContentBlock{
+				Type: CanonicalBlockToolCall,
+				ToolCall: &CanonicalToolCall{
+					ID:        block.ID,
+					Name:      block.Name,
+					Arguments: args,
+				},
+			})
+		case "tool_result":
+			turn.Blocks = append(turn.Blocks, CanonicalContentBlock{
+				Type: CanonicalBlockToolResult,
+				ToolResult: &CanonicalToolResult{
+					ToolCallID: block.ToolUseID,
+					Content:    toolResultString(block.Content),
+				},
+			})
+		case "image":
+			turn.Blocks = append(turn.Blocks, CanonicalContentBlock{
+				Type: CanonicalBlockImage,
+				Data: mustMarshalRaw(block.Source),
+			})
+		case "document":
+			turn.Blocks = append(turn.Blocks, CanonicalContentBlock{
+				Type: CanonicalBlockDocument,
+				Data: mustMarshalRaw(block.Source),
+			})
+		}
+	}
+	return turn, nil
+}
+
+func canonicalToolDefinitions(tools []Tool) []CanonicalToolDefinition {
+	if len(tools) == 0 {
+		return nil
+	}
+	out := make([]CanonicalToolDefinition, 0, len(tools))
+	for _, tool := range tools {
+		out = append(out, CanonicalToolDefinition{
+			Type:        tool.Type,
+			Name:        tool.Function.Name,
+			Description: tool.Function.Description,
+			Parameters:  mustMarshalRaw(tool.Function.Parameters),
+		})
+	}
+	return out
+}
+
+func projectCanonicalToolDefinitions(tools []CanonicalToolDefinition) []Tool {
+	if len(tools) == 0 {
+		return nil
+	}
+	out := make([]Tool, 0, len(tools))
+	for _, tool := range tools {
+		out = append(out, Tool{
+			Type: toolTypeOrDefault(tool.Type),
+			Function: ToolFunction{
+				Name:        tool.Name,
+				Description: tool.Description,
+				Parameters:  unmarshalRawAny(tool.Parameters),
+			},
+		})
+	}
+	return out
+}
+
+func projectCanonicalTurnsToLegacyMessages(turns []CanonicalTurn) ([]Message, error) {
+	out := make([]Message, 0, len(turns))
+	for _, turn := range turns {
+		messages, err := projectCanonicalTurn(turn)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, messages...)
+	}
+	return out, nil
+}
+
+func projectCanonicalTurn(turn CanonicalTurn) ([]Message, error) {
+	switch turn.Role {
+	case "system", "user":
+		return projectCanonicalUserLikeTurn(turn), nil
+	case "assistant":
+		message := Message{Role: "assistant", Name: turn.Name}
+		for _, block := range turn.Blocks {
+			switch block.Type {
+			case CanonicalBlockText:
+				appendInlineText(&message.Content, block.Text)
+			case CanonicalBlockReasoning:
+				appendInlineText(&message.Content, "[thinking]"+block.Text+"[/thinking]")
+			case CanonicalBlockImage:
+				appendStructuredText(&message.Content, mediaBlockToText(block.Type, block.Data))
+			case CanonicalBlockDocument:
+				appendStructuredText(&message.Content, mediaBlockToText(block.Type, block.Data))
+			case CanonicalBlockToolCall:
+				if block.ToolCall == nil {
+					continue
+				}
+				message.ToolCalls = append(message.ToolCalls, ToolCall{
+					Index: len(message.ToolCalls),
+					ID:    block.ToolCall.ID,
+					Type:  "function",
+					Function: FunctionCall{
+						Name:      block.ToolCall.Name,
+						Arguments: canonicalToolArguments(block.ToolCall),
+					},
+				})
+			case CanonicalBlockToolResult:
+				if block.ToolResult != nil {
+					appendStructuredText(&message.Content, block.ToolResult.Content)
+				}
+			}
+		}
+		if message.Content == "" && len(message.ToolCalls) == 0 {
+			return nil, nil
+		}
+		return []Message{message}, nil
+	case "tool":
+		out := make([]Message, 0, len(turn.Blocks))
+		for _, block := range turn.Blocks {
+			if block.Type != CanonicalBlockToolResult || block.ToolResult == nil {
+				continue
+			}
+			out = append(out, Message{
+				Role:       "tool",
+				ToolCallID: block.ToolResult.ToolCallID,
+				Content:    block.ToolResult.Content,
+			})
+		}
+		return out, nil
+	default:
+		return nil, fmt.Errorf("unsupported role %q", turn.Role)
+	}
+}
+
+func projectCanonicalUserLikeTurn(turn CanonicalTurn) []Message {
+	current := Message{Role: turn.Role, Name: turn.Name}
+	out := make([]Message, 0, len(turn.Blocks)+1)
+	flushCurrent := func() {
+		if current.Content == "" {
+			return
+		}
+		out = append(out, current)
+		current = Message{Role: turn.Role, Name: turn.Name}
+	}
+
+	for _, block := range turn.Blocks {
+		switch block.Type {
+		case CanonicalBlockText:
+			appendInlineText(&current.Content, block.Text)
+		case CanonicalBlockReasoning:
+			appendInlineText(&current.Content, "[thinking]"+block.Text+"[/thinking]")
+		case CanonicalBlockImage:
+			appendStructuredText(&current.Content, mediaBlockToText(block.Type, block.Data))
+		case CanonicalBlockDocument:
+			appendStructuredText(&current.Content, mediaBlockToText(block.Type, block.Data))
+		case CanonicalBlockToolResult:
+			if block.ToolResult == nil {
+				continue
+			}
+			flushCurrent()
+			out = append(out, Message{
+				Role:       "tool",
+				ToolCallID: block.ToolResult.ToolCallID,
+				Content:    block.ToolResult.Content,
+			})
+		}
+	}
+	flushCurrent()
+	return out
+}
+
+func appendInlineText(current *string, next string) {
+	if next == "" {
+		return
+	}
+	*current += next
+}
+
+func appendStructuredText(current *string, next string) {
+	if next == "" {
+		return
+	}
+	if *current != "" {
+		*current += "\n"
+	}
+	*current += next
+}
+
+func mediaBlockToText(kind CanonicalBlockType, raw json.RawMessage) string {
+	if len(raw) == 0 {
+		if kind == CanonicalBlockDocument {
+			return "[document]"
+		}
+		return "[image]"
+	}
+	var source ImageSource
+	if err := json.Unmarshal(raw, &source); err != nil {
+		if kind == CanonicalBlockDocument {
+			return "[document]"
+		}
+		return "[image]"
+	}
+	if kind == CanonicalBlockDocument {
+		return documentToText(&source)
+	}
+	return imageToText(&source)
+}
+
+func canonicalToolArguments(toolCall *CanonicalToolCall) string {
+	if toolCall == nil || toolCall.Arguments == "" {
+		return "{}"
+	}
+	return toolCall.Arguments
+}
+
+func parseMetadataMap(raw json.RawMessage) map[string]any {
+	raw = json.RawMessage(strings.TrimSpace(string(raw)))
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal(raw, &metadata); err != nil {
+		return nil
+	}
+	return metadata
+}
+
+func metadataString(metadata map[string]any, key string) string {
+	if metadata == nil {
+		return ""
+	}
+	value, _ := metadata[key].(string)
+	return strings.TrimSpace(value)
+}
+
+func mustMarshalRaw(value any) json.RawMessage {
+	if value == nil {
+		return nil
+	}
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return nil
+	}
+	return json.RawMessage(raw)
+}
+
+func unmarshalRawAny(raw json.RawMessage) any {
+	if len(raw) == 0 {
+		return nil
+	}
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return nil
+	}
+	return value
+}
+
+func toolTypeOrDefault(toolType string) string {
+	if toolType == "" {
+		return "function"
+	}
+	return toolType
+}
+
 func parseSystemPrompt(raw json.RawMessage) (*Message, error) {
 	raw = json.RawMessage(strings.TrimSpace(string(raw)))
 	if len(raw) == 0 {

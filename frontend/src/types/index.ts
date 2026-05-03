@@ -20,6 +20,12 @@ export interface RequestLog {
   ttft_ms: number;
   upstream_ms: number;
   downstream_ms: number;
+  canonical_record?: boolean;
+  ingress_protocol?: string;
+  ingress_endpoint?: string;
+  pre_policy_request?: string;
+  post_policy_request?: string;
+  session_snapshot?: string;
 }
 
 export interface LogListResult {
@@ -38,6 +44,59 @@ export interface ModelMapping {
   enabled: boolean;
   created_at: string;
   updated_at: string;
+}
+
+export interface PolicyMatch {
+  protocol?: string;
+  requested_model?: string;
+  stream?: boolean;
+  has_tools?: boolean;
+  has_reasoning?: boolean;
+  session_present?: boolean;
+  client_name?: string;
+  ingress_tag?: string;
+}
+
+export interface PolicyActions {
+  rewrite_model?: string;
+  set_reasoning?: boolean;
+  allow_tools?: boolean;
+  add_tags?: string[];
+}
+
+export interface PolicyRule {
+  id: number;
+  priority: number;
+  name: string;
+  enabled: boolean;
+  match: PolicyMatch;
+  actions: PolicyActions;
+  source: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PolicyTestInput {
+  protocol: string;
+  requested_model: string;
+  stream: boolean;
+  has_tools: boolean;
+  has_reasoning: boolean;
+  session_present: boolean;
+  client_name?: string;
+  ingress_tag?: string;
+}
+
+export interface PolicyTestResult {
+  matched: boolean;
+  effective_actions: PolicyActions;
+  matched_rules: Array<{
+    id: number;
+    name: string;
+    priority: number;
+    applied: PolicyActions;
+    suppressed?: string[];
+  }>;
 }
 
 export interface DashboardStats {

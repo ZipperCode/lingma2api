@@ -43,7 +43,12 @@ export function Models() {
   return (
     <div>
       <div className="page-header">
-        <h2>模型管理</h2>
+        <div>
+          <h2>兼容映射</h2>
+          <p style={{ color: 'var(--text-secondary)', marginTop: 6 }}>
+            旧版模型映射兼容视图；新规则请优先使用“策略引擎”。
+          </p>
+        </div>
         <button className="btn btn-primary" onClick={() => setShowNew(true)}>➕ 新增规则</button>
       </div>
 

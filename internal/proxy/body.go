@@ -34,7 +34,12 @@ func NewBodyBuilder(cosyVersion string, now func() time.Time, newUUID func() str
 	}
 }
 
-func (builder *BodyBuilder) Build(request OpenAIChatRequest, messages []Message, modelKey string) (RemoteChatRequest, error) {
+func (builder *BodyBuilder) BuildCanonical(request CanonicalRequest, modelKey string) (RemoteChatRequest, error) {
+	messages, err := projectCanonicalTurnsToLegacyMessages(request.Turns)
+	if err != nil {
+		return RemoteChatRequest{}, err
+	}
+
 	requestID := builder.newHexID()
 	temperature := 0.1
 	if request.Temperature != nil {
@@ -76,7 +81,7 @@ func (builder *BodyBuilder) Build(request OpenAIChatRequest, messages []Message,
 		"image_urls":       nil,
 		"is_reply":         false,
 		"is_retry":         false,
-		"session_id":       "",
+		"session_id":       request.SessionID,
 		"code_language":    "",
 		"source":           0,
 		"version":          "3",
@@ -91,7 +96,7 @@ func (builder *BodyBuilder) Build(request OpenAIChatRequest, messages []Message,
 			"model":                 modelKey,
 			"format":                "",
 			"is_vl":                 false,
-			"is_reasoning":          request.Reasoning,
+			"is_reasoning":          request.HasReasoning,
 			"api_key":               "",
 			"url":                   "",
 			"source":                "",
@@ -118,8 +123,9 @@ func (builder *BodyBuilder) Build(request OpenAIChatRequest, messages []Message,
 		},
 	}
 
-	if len(request.Tools) > 0 {
-		payload["tools"] = request.Tools
+	tools := projectCanonicalToolDefinitions(request.Tools)
+	if len(tools) > 0 {
+		payload["tools"] = tools
 	}
 	if request.ToolChoice != nil {
 		payload["tool_choice"] = request.ToolChoice

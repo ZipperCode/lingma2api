@@ -35,7 +35,8 @@ var (
 )
 
 func main() {
-	fmt.Println("=== Encoding Analyzer for /api/v3/user/refresh_token ===\n")
+	fmt.Println("=== Encoding Analyzer for /api/v3/user/refresh_token ===")
+	fmt.Println()
 
 	// Build the JSON body
 	body := map[string]interface{}{

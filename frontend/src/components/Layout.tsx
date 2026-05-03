@@ -15,7 +15,8 @@ export function Layout({ theme, onToggleTheme }: Props) {
           <NavLink to="/dashboard" className={({ isActive }) => isActive ? 'active' : ''}>仪表盘</NavLink>
           <NavLink to="/logs" className={({ isActive }) => isActive ? 'active' : ''}>请求日志</NavLink>
           <NavLink to="/account" className={({ isActive }) => isActive ? 'active' : ''}>账号管理</NavLink>
-          <NavLink to="/models" className={({ isActive }) => isActive ? 'active' : ''}>模型管理</NavLink>
+          <NavLink to="/policies" className={({ isActive }) => isActive ? 'active' : ''}>策略引擎</NavLink>
+          <NavLink to="/models" className={({ isActive }) => isActive ? 'active' : ''}>兼容映射</NavLink>
           <NavLink to="/settings" className={({ isActive }) => isActive ? 'active' : ''}>设置</NavLink>
         </nav>
         <div className="sidebar-status">已连接</div>

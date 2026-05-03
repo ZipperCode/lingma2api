@@ -602,3 +602,82 @@ tr:last-child td { border-bottom: none; }
 div:has(> h2:only-of-type) {
   background: var(--bg);
 }
+
+/* ===== Platform Policy Console ===== */
+.policy-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.policy-summary-card {
+  min-height: 92px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.policy-summary-card span {
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.policy-summary-card strong {
+  font-size: 28px;
+  letter-spacing: -0.04em;
+}
+
+.form-grid {
+  display: grid;
+  gap: 14px 16px;
+}
+
+.form-grid.two-cols {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.form-grid.four-cols {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.form-section-title {
+  margin: 22px 0 12px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.checkbox-pill {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  color: var(--text) !important;
+}
+
+.policy-test-result {
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(99, 102, 241, 0.07);
+}
+
+@media (max-width: 1100px) {
+  .form-grid.four-cols { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 760px) {
+  .policy-summary-grid,
+  .form-grid.two-cols,
+  .form-grid.four-cols { grid-template-columns: 1fr; }
+}
