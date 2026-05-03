@@ -69,9 +69,23 @@ func (server *Server) persistCanonicalExecutionRecord(
 	assistant proxy.Message,
 	remoteRequest proxy.RemoteChatRequest,
 	rawSSELines []string,
+	promptTokens int,
+	completionTokens int,
+	totalTokens int,
 ) {
 	if server.db == nil {
 		return
+	}
+
+	// Fallback to estimation if no real counts provided
+	if promptTokens <= 0 {
+		promptTokens = db.EstimateMessageTokens(requestMessages)
+	}
+	if completionTokens <= 0 {
+		completionTokens = db.EstimateMessageTokens([]proxy.Message{assistant})
+	}
+	if totalTokens <= 0 {
+		totalTokens = promptTokens + completionTokens
 	}
 
 	record := &db.CanonicalExecutionRecordRow{
@@ -97,9 +111,9 @@ func (server *Server) persistCanonicalExecutionRecord(
 				"model_key":         remoteRequest.ModelKey,
 				"stream":            remoteRequest.Stream,
 				"upstream_status":   200,
-				"prompt_tokens":     db.EstimateMessageTokens(requestMessages),
-				"completion_tokens": db.EstimateMessageTokens([]proxy.Message{assistant}),
-				"total_tokens":      db.EstimateMessageTokens(requestMessages) + db.EstimateMessageTokens([]proxy.Message{assistant}),
+				"prompt_tokens":     promptTokens,
+				"completion_tokens": completionTokens,
+				"total_tokens":      totalTokens,
 			},
 		},
 	}

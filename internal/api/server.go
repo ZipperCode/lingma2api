@@ -370,6 +370,7 @@ func (server *Server) writeNonStreamResponse(
 		assistant,
 		remoteRequest,
 		rawSSELines,
+		0, 0, 0, // real token counts (extracted in later tasks)
 	)
 
 	finishReason := "stop"
@@ -564,6 +565,7 @@ func (server *Server) streamChatResponse(
 		assistant,
 		remoteRequest,
 		rawSSELines,
+		0, 0, 0, // real token counts (extracted in later tasks)
 	)
 
 	finishReason := "stop"

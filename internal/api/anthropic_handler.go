@@ -219,6 +219,7 @@ func (server *Server) nonStreamAnthropicResponse(
 			assistant,
 			remoteRequest,
 			rawSSELines,
+			0, 0, 0, // real token counts (extracted in later tasks)
 		)
 	}
 
@@ -445,6 +446,7 @@ func (server *Server) streamAnthropicResponse(
 			assistant,
 			remoteRequest,
 			rawSSELines,
+			0, 0, 0, // real token counts (extracted in later tasks)
 		)
 	}
 }
