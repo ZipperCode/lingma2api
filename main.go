@@ -59,7 +59,7 @@ func main() {
 		return auth.RefreshAndSave(ctx, cfg.Credential.AuthFile, refresher, true, "")
 	})
 
-	transport := proxy.NewCurlTransport(cfg.Lingma.BaseURL, signer, 90*time.Second)
+	transport := proxy.NewNativeTransport(cfg.Lingma.BaseURL, signer, 90*time.Second)
 	models := proxy.NewModelService(transport, credentials, proxy.DefaultAliases(), time.Now)
 	sessions := proxy.NewSessionStore(time.Duration(cfg.Session.TTLMinutes)*time.Minute, cfg.Session.MaxSessions, time.Now)
 	builder := proxy.NewBodyBuilder(cfg.Lingma.CosyVersion, time.Now, proxy.NewUUID, proxy.NewHexID)
@@ -85,6 +85,14 @@ func main() {
 				if d, err := strconv.Atoi(settings["retention_days"]); err == nil {
 					retentionDays = d
 				}
+
+				// Update request timeout if configured
+				if timeoutStr, ok := settings["request_timeout"]; ok && timeoutStr != "" {
+					if sec, err := strconv.Atoi(timeoutStr); err == nil && sec > 0 {
+						transport.SetTimeout(time.Duration(sec) * time.Second)
+					}
+				}
+
 				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 				affected, err := store.CleanupExpiredLogs(ctx, retentionDays)
 				cancel()
@@ -92,6 +100,16 @@ func main() {
 					log.Printf("cleanup logs error: %v", err)
 				} else if affected > 0 {
 					log.Printf("cleaned up %d expired log(s)", affected)
+				}
+
+				// Cleanup canonical execution records
+				ctx2, cancel2 := context.WithTimeout(context.Background(), 30*time.Second)
+				affected2, err2 := store.CleanupExpiredCanonicalRecords(ctx2, retentionDays)
+				cancel2()
+				if err2 != nil {
+					log.Printf("cleanup canonical records error: %v", err2)
+				} else if affected2 > 0 {
+					log.Printf("cleaned up %d expired canonical record(s)", affected2)
 				}
 			}
 		}
