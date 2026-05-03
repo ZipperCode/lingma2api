@@ -3,6 +3,7 @@ package proxy
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -75,6 +76,9 @@ func (t *NativeTransport) StreamChat(ctx context.Context, request RemoteChatRequ
 	}
 
 	t.mu.RLock()
+	// Copy client pointer under read lock to ensure we use a consistent
+	// *http.Client for the entire request. SetTimeout takes the write lock
+	// when updating t.client, so this snapshot is race-free.
 	client := t.client
 	t.mu.RUnlock()
 
@@ -84,8 +88,11 @@ func (t *NativeTransport) StreamChat(ctx context.Context, request RemoteChatRequ
 	}
 
 	if resp.StatusCode >= 400 {
-		bodyBytes, _ := io.ReadAll(resp.Body)
+		bodyBytes, readErr := io.ReadAll(resp.Body)
 		resp.Body.Close()
+		if readErr != nil {
+			return nil, fmt.Errorf("reading upstream error response: %w", readErr)
+		}
 		return nil, &UpstreamHTTPError{
 			StatusCode: resp.StatusCode,
 			Body:       strings.TrimSpace(string(bodyBytes)),
