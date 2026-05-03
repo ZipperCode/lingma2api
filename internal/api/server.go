@@ -103,7 +103,6 @@ func NewServer(deps Dependencies, store *db.Store) http.Handler {
 	mux.HandleFunc("/v1/messages", server.handleAnthropicMessages)
 	mux.HandleFunc("/v1/models", server.handleModels)
 	mux.HandleFunc("/admin/status", server.handleAdminStatus)
-	mux.HandleFunc("/admin/refresh", server.handleAdminRefresh)
 	mux.HandleFunc("/admin/sessions", server.handleAdminSessions)
 	mux.HandleFunc("/admin/sessions/", server.handleAdminSessionDelete)
 	mux.HandleFunc("/admin/dashboard", server.handleAdminDashboard)
@@ -603,18 +602,6 @@ func (server *Server) handleAdminStatus(writer http.ResponseWriter, request *htt
 		Models:       server.deps.Models.Status(),
 		SessionCount: len(sessions),
 	})
-}
-
-func (server *Server) handleAdminRefresh(writer http.ResponseWriter, request *http.Request) {
-	if request.Method != http.MethodPost {
-		writeMethodNotAllowed(writer, http.MethodPost)
-		return
-	}
-	if !server.isAdminAuthorized(request) {
-		writeOpenAIError(writer, http.StatusUnauthorized, "unauthorized")
-		return
-	}
-	writeOpenAIError(writer, http.StatusNotImplemented, "project credential refresh is not implemented; rerun lingma-auth-bootstrap")
 }
 
 func (server *Server) handleAdminSessions(writer http.ResponseWriter, request *http.Request) {

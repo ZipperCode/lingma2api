@@ -114,43 +114,6 @@ func TestChatCompletionsNonStreamReturnsOpenAIResponse(t *testing.T) {
 	}
 }
 
-func TestAdminRefreshRequiresTokenWhenConfigured(t *testing.T) {
-	handler := NewServer(Dependencies{
-		Credentials: fakeCredentials{},
-		Models:      fakeModels{},
-		Sessions:    fakeSessions{},
-		Transport:   fakeTransport{},
-		Builder:     fakeBuilder{},
-		AdminToken:  "secret",
-	}, nil)
-
-	request := httptest.NewRequest(http.MethodPost, "/admin/refresh", nil)
-	recorder := httptest.NewRecorder()
-	handler.ServeHTTP(recorder, request)
-
-	if recorder.Code != http.StatusUnauthorized {
-		t.Fatalf("expected 401, got %d", recorder.Code)
-	}
-}
-
-func TestAdminRefreshReturnsNotImplementedWithoutRefreshFlow(t *testing.T) {
-	handler := NewServer(Dependencies{
-		Credentials: fakeCredentials{},
-		Models:      fakeModels{},
-		Sessions:    fakeSessions{},
-		Transport:   fakeTransport{},
-		Builder:     fakeBuilder{},
-	}, nil)
-
-	request := httptest.NewRequest(http.MethodPost, "/admin/refresh", nil)
-	recorder := httptest.NewRecorder()
-	handler.ServeHTTP(recorder, request)
-
-	if recorder.Code != http.StatusNotImplemented {
-		t.Fatalf("expected 501, got %d", recorder.Code)
-	}
-}
-
 func TestChatCompletionsRejectsToolMessageWithoutToolCallID(t *testing.T) {
 	handler := NewServer(Dependencies{
 		Credentials: fakeCredentials{},

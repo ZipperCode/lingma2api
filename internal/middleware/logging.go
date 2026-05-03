@@ -1,12 +1,14 @@
 package middleware
 
+// Deprecated: The Logging middleware is deprecated. Request logging is now handled
+// by the canonical execution pipeline in internal/api/canonical_runtime.go.
+// This middleware remains for backward compatibility but no longer writes to request_logs.
+
 import (
 	"bytes"
-	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
-	"io"
 	"net/http"
 	"strconv"
 	"time"
@@ -22,58 +24,9 @@ type LoggingConfig struct {
 func Logging(dbInst *db.Store, cfg LoggingConfig) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path != "/v1/chat/completions" || r.Method != http.MethodPost {
-				next.ServeHTTP(w, r)
-				return
-			}
-
-			bodyBytes, err := io.ReadAll(io.LimitReader(r.Body, 2<<20))
-			if err != nil {
-				http.Error(w, "read body failed", http.StatusBadRequest)
-				return
-			}
-			r.Body.Close()
-			r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-
-			start := time.Now()
-			rec := &responseRecorder{ResponseWriter: w, statusCode: http.StatusOK}
-			next.ServeHTTP(rec, r)
-			elapsed := time.Since(start)
-
-			logEntry := &db.RequestLog{
-				ID:               generateID(),
-				CreatedAt:        start,
-				DownstreamMethod: r.Method,
-				DownstreamPath:   r.URL.Path,
-				DownstreamReq:    string(bodyBytes),
-				DownstreamResp:   rec.buf.String(),
-				UpstreamStatus:   rec.statusCode,
-				Status:           "success",
-				DownstreamMs:     int(elapsed.Milliseconds()),
-			}
-			if rec.statusCode >= 400 {
-				logEntry.Status = "error"
-			}
-
-			var reqBody struct {
-				Model string `json:"model"`
-			}
-			json.Unmarshal(bodyBytes, &reqBody)
-			logEntry.Model = reqBody.Model
-			logEntry.MappedModel = reqBody.Model
-
-			extractTokensFromResponse(logEntry)
-
-			if cfg.StorageMode == "truncated" && cfg.TruncateLength > 0 {
-				logEntry.DownstreamReq = truncate(logEntry.DownstreamReq, cfg.TruncateLength)
-				logEntry.DownstreamResp = truncate(logEntry.DownstreamResp, cfg.TruncateLength)
-			}
-
-			go func() {
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
-				_ = dbInst.InsertLog(ctx, logEntry)
-			}()
+			// Deprecated: no longer intercepts or logs requests.
+			// All request logging is handled by the canonical pipeline.
+			next.ServeHTTP(w, r)
 		})
 	}
 }
