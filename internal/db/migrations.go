@@ -78,6 +78,26 @@ var migrations = []string{
 		key   TEXT PRIMARY KEY,
 		value TEXT NOT NULL
 	)`,
+
+	`CREATE TABLE IF NOT EXISTS http_exchanges (
+		id          INTEGER PRIMARY KEY AUTOINCREMENT,
+		log_id      TEXT NOT NULL,
+		direction   TEXT NOT NULL,
+		phase       TEXT NOT NULL,
+		timestamp   DATETIME NOT NULL,
+		method      TEXT,
+		url         TEXT,
+		path        TEXT,
+		status_code INTEGER,
+		headers     TEXT DEFAULT '',
+		body        TEXT DEFAULT '',
+		duration_ms INTEGER,
+		error       TEXT DEFAULT '',
+		raw_stream  TEXT DEFAULT '',
+		created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_exchanges_log_id ON http_exchanges(log_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_exchanges_timestamp ON http_exchanges(timestamp)`,
 }
 
 func runMigrations(conn *sql.DB) error {
