@@ -4,15 +4,28 @@ import "encoding/json"
 
 // ---- Request types ----
 
+// AnthropicTool represents a tool in Anthropic API format (flat structure).
+// Unlike OpenAI's {"type":"function","function":{...}} nested format,
+// Anthropic puts name/description at the top level and uses input_schema.
+type AnthropicTool struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
+	InputSchema json.RawMessage `json:"input_schema,omitempty"`
+}
+
 type AnthropicMessagesRequest struct {
-	Model     string             `json:"model"`
-	Messages  []AnthropicMessage `json:"messages"`
-	System    json.RawMessage    `json:"system,omitempty"` // string or []SystemBlock
-	Tools     []Tool             `json:"tools,omitempty"`
-	MaxTokens int                `json:"max_tokens"`
-	Stream    bool               `json:"stream,omitempty"`
-	Thinking  *ThinkingConfig    `json:"thinking,omitempty"`
-	Metadata  json.RawMessage    `json:"metadata,omitempty"`
+	Model       string             `json:"model"`
+	Messages    []AnthropicMessage `json:"messages"`
+	System      json.RawMessage    `json:"system,omitempty"` // string or []SystemBlock
+	Tools       []AnthropicTool    `json:"tools,omitempty"`
+	ToolChoice  any                `json:"tool_choice,omitempty"` // string or object
+	MaxTokens   int                `json:"max_tokens"`
+	Temperature *float64           `json:"temperature,omitempty"`
+	TopP        *float64           `json:"top_p,omitempty"`
+	TopK        *int               `json:"top_k,omitempty"`
+	Stream      bool               `json:"stream,omitempty"`
+	Thinking    *ThinkingConfig    `json:"thinking,omitempty"`
+	Metadata    json.RawMessage    `json:"metadata,omitempty"`
 }
 
 type ThinkingConfig struct {
@@ -27,7 +40,7 @@ type AnthropicMessage struct {
 
 type ContentBlock struct {
 	Type      string          `json:"type"`                 // text, tool_use, tool_result, thinking, image, document
-	Text      string          `json:"text,omitempty"`
+	Text      string          `json:"text"`
 	ID        string          `json:"id,omitempty"`         // tool_use id
 	Name      string          `json:"name,omitempty"`       // tool_use name
 	Input     json.RawMessage `json:"input,omitempty"`      // tool_use input (JSON object)

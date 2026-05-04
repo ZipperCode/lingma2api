@@ -151,6 +151,7 @@ func (server *Server) nonStreamAnthropicResponse(
 	var reasoningBuilder strings.Builder
 	var rawSSELines []string
 	var inputTokens, outputTokens int
+	var toolCalls []proxy.ToolCall
 	err := proxy.ScanSSEWithLines(stream, func(line string) error {
 		rawSSELines = append(rawSSELines, line)
 		return nil
@@ -161,6 +162,7 @@ func (server *Server) nonStreamAnthropicResponse(
 		}
 		contentBuilder.WriteString(event.Content)
 		reasoningBuilder.WriteString(event.ReasoningContent)
+		toolCalls = append(toolCalls, event.ToolCalls...)
 		return nil
 	})
 	if err != nil {
@@ -184,6 +186,24 @@ func (server *Server) nonStreamAnthropicResponse(
 			Type: "text",
 			Text: contentText,
 		})
+	}
+
+	// Add tool_use blocks if upstream returned tool_calls
+	// Merge fragmented tool call deltas by index
+	mergedToolCalls := mergeToolCallDeltas(toolCalls)
+	for _, tc := range mergedToolCalls {
+		blocks = append(blocks, proxy.ContentBlock{
+			Type:  "tool_use",
+			ID:    tc.ID,
+			Name:  tc.Function.Name,
+			Input: json.RawMessage(tc.Function.Arguments),
+		})
+	}
+
+	// Determine stop_reason
+	stopReason := "end_turn"
+	if len(mergedToolCalls) > 0 {
+		stopReason = "tool_use"
 	}
 
 	if len(blocks) == 0 {
@@ -213,7 +233,7 @@ func (server *Server) nonStreamAnthropicResponse(
 		Role:       "assistant",
 		Content:    blocks,
 		Model:      request.Model,
-		StopReason: "end_turn",
+		StopReason: stopReason,
 		Usage:      usage,
 	}
 	assistantContent := contentText
@@ -288,6 +308,7 @@ func (server *Server) streamAnthropicResponse(
 	blockIndex := -1
 	var blockStarted bool
 	var blockType string // "thinking", "text", or "tool_use"
+	var hasToolUse bool
 	var contentBuilder strings.Builder
 	var reasoningBuilder strings.Builder
 	var rawSSELines []string
@@ -395,6 +416,7 @@ func (server *Server) streamAnthropicResponse(
 				})
 				blockStarted = true
 				blockType = "tool_use"
+				hasToolUse = true
 			}
 			if tc.Function.Arguments != "" {
 				writeAnthropicSSE(writer, proxy.AnthropicStreamEvent{
@@ -442,11 +464,16 @@ func (server *Server) streamAnthropicResponse(
 	}
 	totalTokens := promptTokens + completionTokens
 
+		stopReason := "end_turn"
+		if hasToolUse {
+			stopReason = "tool_use"
+		}
+
 	// message_delta
 	writeAnthropicSSE(writer, proxy.AnthropicStreamEvent{
 		Type: "message_delta",
 		Delta: &proxy.StreamDelta{
-			StopReason: "end_turn",
+			StopReason: stopReason,
 		},
 		Usage: &proxy.Usage{
 			OutputTokens: completionTokens,
@@ -508,3 +535,43 @@ func writeAnthropicError(writer http.ResponseWriter, statusCode int, message str
 }
 
 func intPtr(i int) *int { return &i }
+
+// mergeToolCallDeltas merges fragmented SSE tool_call deltas into complete tool calls.
+// SSE streams send tool calls in pieces: first {id, name}, then multiple {arguments} chunks.
+func mergeToolCallDeltas(deltas []proxy.ToolCall) []proxy.ToolCall {
+	if len(deltas) == 0 {
+		return nil
+	}
+	merged := make(map[int]*proxy.ToolCall)
+	order := make([]int, 0, len(deltas))
+	for _, tc := range deltas {
+		idx := tc.Index
+		if existing, ok := merged[idx]; ok {
+			if tc.ID != "" {
+				existing.ID = tc.ID
+			}
+			if tc.Function.Name != "" {
+				existing.Function.Name = tc.Function.Name
+			}
+			if tc.Function.Arguments != "" {
+				existing.Function.Arguments += tc.Function.Arguments
+			}
+		} else {
+			merged[idx] = &proxy.ToolCall{
+				Index: idx,
+				ID:    tc.ID,
+				Type:  tc.Type,
+				Function: proxy.FunctionCall{
+					Name:      tc.Function.Name,
+					Arguments: tc.Function.Arguments,
+				},
+			}
+			order = append(order, idx)
+		}
+	}
+	result := make([]proxy.ToolCall, 0, len(merged))
+	for _, idx := range order {
+		result = append(result, *merged[idx])
+	}
+	return result
+}

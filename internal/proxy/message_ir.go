@@ -178,7 +178,9 @@ func CanonicalizeAnthropicRequest(req AnthropicMessagesRequest, sessionID string
 		Protocol:      CanonicalProtocolAnthropic,
 		Model:         req.Model,
 		Stream:        req.Stream,
-		Tools:         canonicalToolDefinitions(req.Tools),
+		Temperature:   req.Temperature,
+		Tools:         canonicalizeAnthropicTools(req.Tools),
+		ToolChoice:    req.ToolChoice,
 		HasTools:      len(req.Tools) > 0,
 		HasReasoning:  req.Thinking == nil || req.Thinking.Type != "disabled",
 		SessionID:     sessionID,
@@ -320,6 +322,22 @@ func canonicalizeAnthropicTurn(message AnthropicMessage) (CanonicalTurn, error) 
 		}
 	}
 	return turn, nil
+}
+
+func canonicalizeAnthropicTools(tools []AnthropicTool) []CanonicalToolDefinition {
+	if len(tools) == 0 {
+		return nil
+	}
+	out := make([]CanonicalToolDefinition, 0, len(tools))
+	for _, tool := range tools {
+		out = append(out, CanonicalToolDefinition{
+			Type:        "function",
+			Name:        tool.Name,
+			Description: tool.Description,
+			Parameters:  json.RawMessage(tool.InputSchema),
+		})
+	}
+	return out
 }
 
 func canonicalToolDefinitions(tools []Tool) []CanonicalToolDefinition {

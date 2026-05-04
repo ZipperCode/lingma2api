@@ -282,16 +282,13 @@ func marshalAnthropicReplayBodyFromCanonical(request proxy.CanonicalRequest) ([]
 	return json.Marshal(anthropicRequest)
 }
 
-func canonicalToolsToAnthropicTools(canonicalTools []proxy.CanonicalToolDefinition) []proxy.Tool {
-	tools := make([]proxy.Tool, 0, len(canonicalTools))
+func canonicalToolsToAnthropicTools(canonicalTools []proxy.CanonicalToolDefinition) []proxy.AnthropicTool {
+	tools := make([]proxy.AnthropicTool, 0, len(canonicalTools))
 	for _, tool := range canonicalTools {
-		tools = append(tools, proxy.Tool{
-			Type: tool.Type,
-			Function: proxy.ToolFunction{
-				Name:        tool.Name,
-				Description: tool.Description,
-				Parameters:  tool.Parameters,
-			},
+		tools = append(tools, proxy.AnthropicTool{
+			Name:        tool.Name,
+			Description: tool.Description,
+			InputSchema: json.RawMessage(tool.Parameters),
 		})
 	}
 	return tools

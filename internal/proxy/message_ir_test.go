@@ -84,7 +84,7 @@ func TestCanonicalizeAnthropicRequestPreservesOrderedBlocks(t *testing.T) {
 	req := AnthropicMessagesRequest{
 		Model:  "claude-3-5-sonnet",
 		Stream: false,
-		Tools:  []Tool{{Type: "function", Function: ToolFunction{Name: "lookup_doc", Parameters: map[string]any{"type": "object"}}}},
+		Tools:  []AnthropicTool{{Name: "lookup_doc", InputSchema: json.RawMessage(`{"type":"object"}`)}},
 		System: json.RawMessage(`[{"type":"text","text":"be precise"}]`),
 		Thinking: &ThinkingConfig{
 			Type:         "enabled",
