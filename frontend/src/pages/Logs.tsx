@@ -1,11 +1,12 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { Download, Eye, RotateCcw, Inbox } from 'lucide-react';
-import { getLogs } from '../api/client';
+import { getLogs, getLog } from '../api/client';
 import { Pagination } from '../components/Pagination';
 import { ReplayModal } from '../components/ReplayModal';
 import { SkeletonTable } from '../components/Skeleton';
 import { EmptyState } from '../components/EmptyState';
+import { LogDetailDrawer } from '../components/LogDetailDrawer';
 import type { RequestLog, LogListResult } from '../types';
 
 export function Logs() {
@@ -16,6 +17,8 @@ export function Logs() {
   const [replayId, setReplayId] = useState<string | null>(null);
   const [replayBody, setReplayBody] = useState('');
   const [loading, setLoading] = useState(true);
+  const [drawerLog, setDrawerLog] = useState<RequestLog | null>(null);
+  const [drawerLoading, setDrawerLoading] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -27,6 +30,18 @@ export function Logs() {
   };
 
   useEffect(() => { load(); }, [page, status, model]);
+
+  const openDrawer = useCallback(async (log: RequestLog) => {
+    setDrawerLoading(true);
+    try {
+      const detail = await getLog(log.id);
+      setDrawerLog(detail);
+    } catch {
+      // Fallback to list data
+      setDrawerLog(log);
+    }
+    setDrawerLoading(false);
+  }, []);
 
   const fmtTime = (s: string) => new Date(s).toLocaleString();
   const handleReplay = (log: RequestLog) => {
@@ -75,7 +90,11 @@ export function Logs() {
               </thead>
               <tbody>
                 {data?.items.map(log => (
-                  <tr key={log.id}>
+                  <tr
+                    key={log.id}
+                    onClick={() => openDrawer(log)}
+                    style={{ cursor: 'pointer' }}
+                  >
                     <td>{fmtTime(log.created_at)}</td>
                     <td>
                       <div>{log.model}{log.model !== log.mapped_model && ` → ${log.mapped_model}`}</div>
@@ -88,10 +107,10 @@ export function Logs() {
                     <td>{log.ttft_ms > 0 ? `${log.ttft_ms}ms` : '-'}</td>
                     <td>{log.total_tokens > 0 ? log.total_tokens.toLocaleString() : '-'}</td>
                     <td>
-                      <Link to={`/logs/${log.id}`} className="btn" style={{ marginRight: 4 }}>
+                      <button className="btn" onClick={e => { e.stopPropagation(); openDrawer(log); }} style={{ marginRight: 4 }}>
                         <Eye size={14} />
-                      </Link>
-                      <button className="btn" onClick={() => handleReplay(log)}>
+                      </button>
+                      <button className="btn" onClick={e => { e.stopPropagation(); handleReplay(log); }}>
                         <RotateCcw size={14} />
                       </button>
                     </td>
@@ -104,6 +123,9 @@ export function Logs() {
         </>
       )}
       {replayId && <ReplayModal logId={replayId} originalBody={replayBody} onClose={() => setReplayId(null)} />}
+      {(drawerLog || drawerLoading) && (
+        <LogDetailDrawer log={drawerLog} onClose={() => { setDrawerLog(null); setDrawerLoading(false); }} />
+      )}
     </div>
   );
 }

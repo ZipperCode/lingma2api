@@ -98,6 +98,7 @@ func (server *Server) handleAnthropicMessages(writer http.ResponseWriter, reques
 	defer stream.Close()
 
 	responseID := "msg_" + remoteRequest.RequestID
+	traceID := proxy.NewUUID()
 
 	if !anthropicReq.Stream {
 		server.nonStreamAnthropicResponse(
@@ -112,6 +113,7 @@ func (server *Server) handleAnthropicMessages(writer http.ResponseWriter, reques
 			canonicalRequest,
 			policyResult.PostPolicyRequest,
 			sessionCanonicalRequest,
+			traceID,
 		)
 	} else {
 		server.streamAnthropicResponse(
@@ -126,6 +128,7 @@ func (server *Server) handleAnthropicMessages(writer http.ResponseWriter, reques
 			canonicalRequest,
 			policyResult.PostPolicyRequest,
 			sessionCanonicalRequest,
+			traceID,
 		)
 	}
 }
@@ -142,6 +145,7 @@ func (server *Server) nonStreamAnthropicResponse(
 	prePolicyRequest proxy.CanonicalRequest,
 	postPolicyRequest proxy.CanonicalRequest,
 	sessionCanonicalRequest proxy.CanonicalRequest,
+	traceID string,
 ) {
 	var contentBuilder strings.Builder
 	var reasoningBuilder strings.Builder
@@ -223,6 +227,7 @@ func (server *Server) nonStreamAnthropicResponse(
 	if err := server.deps.Sessions.SaveCanonicalResponse(ctx, sessionID, sessionCanonicalRequest, assistant); err == nil {
 		server.persistCanonicalExecutionRecord(
 			ctx,
+			traceID,
 			prePolicyRequest.Protocol,
 			"/v1/messages",
 			prePolicyRequest,
@@ -254,6 +259,7 @@ func (server *Server) streamAnthropicResponse(
 	prePolicyRequest proxy.CanonicalRequest,
 	postPolicyRequest proxy.CanonicalRequest,
 	sessionCanonicalRequest proxy.CanonicalRequest,
+	traceID string,
 ) {
 	flusher, ok := writer.(http.Flusher)
 	if !ok {
@@ -466,6 +472,7 @@ func (server *Server) streamAnthropicResponse(
 	if err := server.deps.Sessions.SaveCanonicalResponse(request.Context(), sessionID, sessionCanonicalRequest, assistant); err == nil {
 		server.persistCanonicalExecutionRecord(
 			request.Context(),
+			traceID,
 			prePolicyRequest.Protocol,
 			"/v1/messages",
 			prePolicyRequest,

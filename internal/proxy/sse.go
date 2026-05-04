@@ -3,7 +3,6 @@ package proxy
 import (
 	"bufio"
 	"encoding/json"
-	"fmt"
 	"io"
 	"strings"
 )
@@ -11,6 +10,7 @@ import (
 type outerSSEPayload struct {
 	Body            string `json:"body"`
 	StatusCodeValue int    `json:"statusCodeValue"`
+	StatusMessage   string `json:"statusMessage"`
 }
 
 type innerSSEPayload struct {
@@ -56,7 +56,14 @@ func ParseSSELine(line string) (SSEEvent, bool, error) {
 		return SSEEvent{}, false, err
 	}
 	if outer.StatusCodeValue >= 400 {
-		return SSEEvent{}, false, fmt.Errorf("upstream sse status %d", outer.StatusCodeValue)
+		errBody := outer.Body
+		if errBody == "" && outer.StatusMessage != "" {
+			errBody = outer.StatusMessage
+		}
+		return SSEEvent{}, false, &UpstreamHTTPError{
+			StatusCode: outer.StatusCodeValue,
+			Body:       errBody,
+		}
 	}
 	if outer.Body == "" {
 		return SSEEvent{}, false, nil

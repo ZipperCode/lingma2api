@@ -52,12 +52,17 @@ func (server *Server) getAdminLog(ctx context.Context, id string) (db.RequestLog
 	}
 	record, err := server.db.GetCanonicalExecutionRecord(ctx, id)
 	if err == nil {
-		return projectCanonicalRecordToLog(record), true, nil
+		log := projectCanonicalRecordToLog(record)
+		exchanges, _ := server.db.GetHTTPExchangesByLogID(ctx, id)
+		log.Exchanges = exchanges
+		return log, true, nil
 	}
 	log, err := server.db.GetLog(ctx, id)
 	if err != nil {
 		return db.RequestLog{}, false, err
 	}
+	exchanges, _ := server.db.GetHTTPExchangesByLogID(ctx, id)
+	log.Exchanges = exchanges
 	return log, false, nil
 }
 
@@ -82,13 +87,46 @@ func (server *Server) exportAdminLogs(ctx context.Context, filter db.LogFilter) 
 func projectAndFilterCanonicalLogs(records []db.CanonicalExecutionRecordRow, filter db.LogFilter) []db.RequestLog {
 	items := make([]db.RequestLog, 0, len(records))
 	for _, record := range records {
-		log := projectCanonicalRecordToLog(record)
+		log := projectCanonicalRecordToListLog(record)
 		if !matchesLogFilter(log, filter) {
 			continue
 		}
 		items = append(items, log)
 	}
 	return items
+}
+
+func projectCanonicalRecordToListLog(record db.CanonicalExecutionRecordRow) db.RequestLog {
+	mappedModel := db.CanonicalRecordMappedModel(record)
+	upstreamStatus := db.CanonicalRecordUpstreamStatus(record)
+	promptTokens, completionTokens, totalTokens := db.CanonicalRecordTokenCounts(record)
+	ttftMs := 0
+	if record.Sidecar != nil {
+		ttftMs = record.Sidecar.TTFTMs
+	}
+
+	_, _, _ = proxy.ProjectCanonicalToOpenAIRequest(record.PrePolicyRequest) // validate
+	model := record.PrePolicyRequest.Model
+	stream := record.PrePolicyRequest.Stream
+
+	return db.RequestLog{
+		ID:               record.ID,
+		CreatedAt:        record.CreatedAt,
+		SessionID:        record.SessionID,
+		Model:            model,
+		MappedModel:      mappedModel,
+		Stream:           stream,
+		Status:           db.CanonicalRecordStatus(record),
+		UpstreamStatus:   upstreamStatus,
+		PromptTokens:     promptTokens,
+		CompletionTokens: completionTokens,
+		TotalTokens:      totalTokens,
+		TTFTMs:           ttftMs,
+		CanonicalRecord:  true,
+		IngressProtocol:  record.IngressProtocol,
+		IngressEndpoint:  record.IngressEndpoint,
+		DownstreamPath:   record.IngressEndpoint,
+	}
 }
 
 func matchesLogFilter(log db.RequestLog, filter db.LogFilter) bool {

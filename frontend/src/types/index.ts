@@ -1,3 +1,20 @@
+export interface HTTPExchange {
+  id: number;
+  log_id: string;
+  direction: 'downstream' | 'upstream';
+  phase: 'request' | 'response';
+  timestamp: string;
+  method?: string;
+  url?: string;
+  path?: string;
+  status_code?: number;
+  headers?: string;
+  body?: string;
+  duration_ms?: number;
+  error?: string;
+  raw_stream?: string;
+}
+
 export interface RequestLog {
   id: string;
   created_at: string;
@@ -26,6 +43,8 @@ export interface RequestLog {
   pre_policy_request?: string;
   post_policy_request?: string;
   session_snapshot?: string;
+  execution_sidecar?: string;
+  exchanges?: HTTPExchange[];
 }
 
 export interface LogListResult {

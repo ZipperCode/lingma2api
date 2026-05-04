@@ -289,6 +289,7 @@ func (server *Server) handleChatCompletions(writer http.ResponseWriter, request 
 	}
 	defer stream.Close()
 
+	traceID := proxy.NewUUID()
 	if projectedRequest.Stream {
 		server.streamChatResponse(
 			writer,
@@ -301,6 +302,7 @@ func (server *Server) handleChatCompletions(writer http.ResponseWriter, request 
 			canonicalRequest,
 			policyResult.PostPolicyRequest,
 			sessionCanonicalRequest,
+			traceID,
 		)
 		return
 	}
@@ -315,6 +317,7 @@ func (server *Server) handleChatCompletions(writer http.ResponseWriter, request 
 		canonicalRequest,
 		policyResult.PostPolicyRequest,
 		sessionCanonicalRequest,
+		traceID,
 	)
 }
 
@@ -352,6 +355,7 @@ func (server *Server) writeNonStreamResponse(
 	prePolicyRequest proxy.CanonicalRequest,
 	postPolicyRequest proxy.CanonicalRequest,
 	sessionCanonicalRequest proxy.CanonicalRequest,
+	traceID string,
 ) {
 	content, rawSSELines, promptTokens, completionTokens, totalTokens, err := collectSSEContentWithUsage(stream)
 	if err != nil {
@@ -368,6 +372,7 @@ func (server *Server) writeNonStreamResponse(
 	}
 	server.persistCanonicalExecutionRecord(
 		ctx,
+		traceID,
 		prePolicyRequest.Protocol,
 		"/v1/chat/completions",
 		prePolicyRequest,
@@ -418,6 +423,7 @@ func (server *Server) streamChatResponse(
 	prePolicyRequest proxy.CanonicalRequest,
 	postPolicyRequest proxy.CanonicalRequest,
 	sessionCanonicalRequest proxy.CanonicalRequest,
+	traceID string,
 ) {
 	flusher, ok := writer.(http.Flusher)
 	if !ok {
@@ -576,6 +582,7 @@ func (server *Server) streamChatResponse(
 	}
 	server.persistCanonicalExecutionRecord(
 		request.Context(),
+		traceID,
 		prePolicyRequest.Protocol,
 		"/v1/chat/completions",
 		prePolicyRequest,

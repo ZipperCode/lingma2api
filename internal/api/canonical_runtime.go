@@ -59,6 +59,7 @@ func (server *Server) evaluateCanonicalRequest(ctx context.Context, canonical pr
 
 func (server *Server) persistCanonicalExecutionRecord(
 	ctx context.Context,
+	traceID string,
 	ingressProtocol proxy.CanonicalProtocol,
 	ingressEndpoint string,
 	prePolicyRequest proxy.CanonicalRequest,
@@ -89,7 +90,7 @@ func (server *Server) persistCanonicalExecutionRecord(
 	}
 
 	record := &db.CanonicalExecutionRecordRow{
-		ID:                proxy.NewUUID(),
+		ID:                traceID,
 		CreatedAt:         server.deps.Now(),
 		IngressProtocol:   string(ingressProtocol),
 		IngressEndpoint:   ingressEndpoint,
@@ -110,7 +111,6 @@ func (server *Server) persistCanonicalExecutionRecord(
 				"request_id":        remoteRequest.RequestID,
 				"model_key":         remoteRequest.ModelKey,
 				"stream":            remoteRequest.Stream,
-				"upstream_status":   200,
 				"prompt_tokens":     promptTokens,
 				"completion_tokens": completionTokens,
 				"total_tokens":      totalTokens,
