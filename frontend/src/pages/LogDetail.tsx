@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { ArrowLeft, Copy, RotateCcw } from 'lucide-react';
 import { getLog } from '../api/client';
 import { CodeViewer } from '../components/CodeViewer';
 import { ReplayModal } from '../components/ReplayModal';
+import { Skeleton } from '../components/Skeleton';
 import type { RequestLog } from '../types';
 
 const BASE_TABS = [
@@ -24,16 +26,42 @@ export function LogDetail() {
   const [log, setLog] = useState<RequestLog | null>(null);
   const [tab, setTab] = useState('downstream_req');
   const [showReplay, setShowReplay] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (id) getLog(id).then(setLog).catch(() => navigate('/logs'));
+    if (id) {
+      setLoading(true);
+      getLog(id).then(d => { setLog(d); setLoading(false); }).catch(() => navigate('/logs'));
+    }
   }, [id, navigate]);
 
-  if (!log) return <div>加载中...</div>;
+  if (loading || !log) {
+    return (
+      <div>
+        <div className="page-header">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <button className="btn" onClick={() => navigate('/logs')}>
+              <ArrowLeft size={16} /> 返回
+            </button>
+            <h2>请求详情</h2>
+          </div>
+        </div>
+        <div className="card" style={{ marginBottom: 16, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 16 }}>
+          {Array.from({ length: 10 }).map((_, i) => (
+            <div key={i}>
+              <Skeleton variant="text" style={{ width: 60, marginBottom: 6 }} />
+              <Skeleton variant="text-lg" style={{ width: 120 }} />
+            </div>
+          ))}
+        </div>
+        <Skeleton variant="rect" style={{ height: 400 }} />
+      </div>
+    );
+  }
 
   const tabs = [
     ...BASE_TABS,
-    ...(log.canonical_record ? CANONICAL_TABS.filter(t => Boolean(log[t.key])) : []),
+    ...(log.canonical_record ? CANONICAL_TABS.filter(t => Boolean(log[t.key as keyof RequestLog])) : []),
   ];
   const tabValue = String(log[tab as keyof RequestLog] || '');
   const copyToClipboard = (text: string) => navigator.clipboard.writeText(text);
@@ -43,12 +71,18 @@ export function LogDetail() {
     <div>
       <div className="page-header">
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <button className="btn" onClick={() => navigate('/logs')}>← 返回</button>
+          <button className="btn" onClick={() => navigate('/logs')}>
+            <ArrowLeft size={16} /> 返回
+          </button>
           <h2>请求详情</h2>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn" onClick={() => copyToClipboard(tabValue)}>📋 复制</button>
-          <button className="btn btn-primary" onClick={() => setShowReplay(true)}>↩️ 重发</button>
+          <button className="btn" onClick={() => copyToClipboard(tabValue)}>
+            <Copy size={16} /> 复制
+          </button>
+          <button className="btn btn-primary" onClick={() => setShowReplay(true)}>
+            <RotateCcw size={16} /> 重发
+          </button>
         </div>
       </div>
 
