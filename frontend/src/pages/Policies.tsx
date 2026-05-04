@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Plus, Pencil, Trash2, Shield, CheckCircle2, XCircle } from 'lucide-react';
 import { createPolicy, deletePolicy, getPolicies, testPolicy, updatePolicy } from '../api/client';
 import { PolicyRuleEditor } from '../components/PolicyRuleEditor';
+import { SkeletonTable } from '../components/Skeleton';
+import { EmptyState } from '../components/EmptyState';
 import type { PolicyRule, PolicyTestInput, PolicyTestResult } from '../types';
 
 const emptyTest: PolicyTestInput = {
@@ -67,7 +70,9 @@ export function Policies() {
             基于 canonical request 的执行策略，优先于兼容模型映射。
           </p>
         </div>
-        <button className="btn btn-primary" onClick={() => setShowNew(true)}>➕ 新增策略</button>
+        <button className="btn btn-primary" onClick={() => setShowNew(true)}>
+          <Plus size={16} /> 新增策略
+        </button>
       </div>
 
       <div className="policy-summary-grid">
@@ -89,33 +94,54 @@ export function Policies() {
 
       <div className="card" style={{ marginBottom: 16 }}>
         <h4 style={{ marginBottom: 12 }}>策略规则</h4>
-        {loading ? <div>加载中...</div> : (
-          <table>
-            <thead>
-              <tr><th>优先级</th><th>名称</th><th>匹配</th><th>动作</th><th>状态</th><th>操作</th></tr>
-            </thead>
-            <tbody>
-              {policies.map(policy => (
-                <tr key={policy.id}>
-                  <td>{policy.priority}</td>
-                  <td>
-                    <strong>{policy.name}</strong>
-                    {policy.source && <div style={{ color: 'var(--text-secondary)', fontSize: 12 }}>{policy.source}</div>}
-                  </td>
-                  <td><PolicyChips value={policy.match} /></td>
-                  <td><PolicyChips value={policy.actions} /></td>
-                  <td>{policy.enabled ? '✅' : '❌'}</td>
-                  <td>
-                    <button className="btn" onClick={() => setEditing(policy)} style={{ marginRight: 4 }}>✏️</button>
-                    <button className="btn btn-danger" onClick={() => handleDelete(policy.id)}>🗑</button>
-                  </td>
-                </tr>
-              ))}
-              {policies.length === 0 && (
-                <tr><td colSpan={6} style={{ color: 'var(--text-secondary)' }}>暂无策略，创建一条模型重写或工具控制规则开始。</td></tr>
-              )}
-            </tbody>
-          </table>
+        {loading ? (
+          <SkeletonTable rows={5} cols={6} />
+        ) : policies.length === 0 ? (
+          <EmptyState
+            icon={Shield}
+            title="暂无策略规则"
+            description="创建第一条模型重写或工具控制规则，开始拦截和转换请求。"
+            action={
+              <button className="btn btn-primary" onClick={() => setShowNew(true)}>
+                <Plus size={16} /> 新增策略
+              </button>
+            }
+          />
+        ) : (
+          <div className="table-scroll">
+            <table>
+              <thead>
+                <tr><th>优先级</th><th>名称</th><th>匹配</th><th>动作</th><th>状态</th><th>操作</th></tr>
+              </thead>
+              <tbody>
+                {policies.map(policy => (
+                  <tr key={policy.id}>
+                    <td>{policy.priority}</td>
+                    <td>
+                      <strong>{policy.name}</strong>
+                      {policy.source && <div style={{ color: 'var(--text-secondary)', fontSize: 12 }}>{policy.source}</div>}
+                    </td>
+                    <td><PolicyChips value={policy.match} /></td>
+                    <td><PolicyChips value={policy.actions} /></td>
+                    <td>
+                      {policy.enabled
+                        ? <CheckCircle2 size={18} style={{ color: 'var(--success)' }} />
+                        : <XCircle size={18} style={{ color: 'var(--error)' }} />
+                      }
+                    </td>
+                    <td>
+                      <button className="btn" onClick={() => setEditing(policy)} style={{ marginRight: 4 }}>
+                        <Pencil size={14} />
+                      </button>
+                      <button className="btn btn-danger" onClick={() => handleDelete(policy.id)}>
+                        <Trash2 size={14} />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 
@@ -149,7 +175,13 @@ export function Policies() {
         <button className="btn" onClick={handleTest}>测试策略</button>
         {testResult && (
           <div className="policy-test-result">
-            <div>{testResult.matched ? '✅ 命中策略' : '❌ 未命中策略'}</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              {testResult.matched
+                ? <CheckCircle2 size={18} style={{ color: 'var(--success)' }} />
+                : <XCircle size={18} style={{ color: 'var(--error)' }} />
+              }
+              {testResult.matched ? '命中策略' : '未命中策略'}
+            </div>
             <PolicyChips value={testResult.effective_actions} />
             {testResult.matched_rules?.length > 0 && (
               <div style={{ marginTop: 8, color: 'var(--text-secondary)', fontSize: 13 }}>
