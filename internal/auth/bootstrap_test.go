@@ -1,10 +1,15 @@
 package auth
 
 import (
+	"context"
+	"io"
+	"net"
+	"net/http"
 	"net/http/httptest"
 	neturl "net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestBuildAuthorizeURLIncludesStateAndChallenge(t *testing.T) {
@@ -131,5 +136,100 @@ func TestCaptureFromRequestReadsQuery(t *testing.T) {
 	}
 	if result.Query.Get("state") != "xyz" {
 		t.Fatalf("expected state xyz, got %q", result.Query.Get("state"))
+	}
+}
+
+func TestWaitForCallback_OriginWhitelistRejectsForeign(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	addr := listener.Addr().String()
+	listener.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	resultCh := make(chan CallbackCapture, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		c, err := WaitForCallbackWithOptions(ctx, addr, "/callback", WaitForCallbackOptions{
+			AllowedOrigins: []string{"http://" + addr, ""},
+			AutoInjectHTML: false,
+		})
+		if err != nil {
+			errCh <- err
+			return
+		}
+		resultCh <- c
+	}()
+
+	// Wait for server to start.
+	time.Sleep(150 * time.Millisecond)
+
+	// Foreign Origin should be rejected.
+	req, _ := http.NewRequest("POST", "http://"+addr+"/submit-userinfo", strings.NewReader(`{}`))
+	req.Header.Set("Origin", "https://evil.com")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("post evil: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected 403 for foreign origin, got %d", resp.StatusCode)
+	}
+
+	// Empty Origin (matches "" in whitelist) should be accepted.
+	req2, _ := http.NewRequest("POST", "http://"+addr+"/submit-userinfo", strings.NewReader(`{"ok":true}`))
+	req2.Header.Set("Content-Type", "application/json")
+	resp2, err := http.DefaultClient.Do(req2)
+	if err != nil {
+		t.Fatalf("post legitimate: %v", err)
+	}
+	resp2.Body.Close()
+
+	select {
+	case captured := <-resultCh:
+		if len(captured.Body) == 0 {
+			t.Fatal("expected non-empty body bytes")
+		}
+	case err := <-errCh:
+		t.Fatalf("WaitForCallbackWithOptions error: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for capture")
+	}
+}
+
+func TestWaitForCallback_AutoInjectHTMLIncludesScript(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	addr := listener.Addr().String()
+	listener.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() {
+		_, _ = WaitForCallbackWithOptions(ctx, addr, "/auth/callback", WaitForCallbackOptions{
+			AutoInjectHTML: true,
+		})
+	}()
+
+	time.Sleep(150 * time.Millisecond)
+
+	resp, err := http.Get("http://" + addr + "/auth/callback")
+	if err != nil {
+		t.Fatalf("get callback: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), "/submit-userinfo") {
+		t.Fatalf("expected injection script in body, got: %s", string(body))
 	}
 }
