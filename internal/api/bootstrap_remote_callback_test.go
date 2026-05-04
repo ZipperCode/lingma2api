@@ -72,6 +72,19 @@ func stubLoginServer(t *testing.T, succeed bool) *httptest.Server {
 // postUserInfo simulates the auto-inject script calling POST /submit-userinfo.
 func postUserInfo(t *testing.T, listenAddr, origin string, body any) *http.Response {
 	t.Helper()
+
+	// Wait until the callback listener is actually bound. The session may
+	// flip to awaiting_callback slightly before net.Listen returns.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		conn, err := net.DialTimeout("tcp", listenAddr, 100*time.Millisecond)
+		if err == nil {
+			conn.Close()
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
 	raw, _ := json.Marshal(body)
 	req, _ := http.NewRequest(http.MethodPost, "http://"+listenAddr+"/submit-userinfo", strings.NewReader(string(raw)))
 	if origin != "" {
@@ -262,5 +275,80 @@ func TestStartRemoteCallback_Cancel(t *testing.T) {
 	final := waitForStatus(t, mgr, sess.ID, 2*time.Second, "cancelled")
 	if final.Status != "cancelled" {
 		t.Errorf("expected cancelled, got %s", final.Status)
+	}
+}
+
+func TestHandleAdminAccountBootstrap_AutoFallsBackToRemoteCallback(t *testing.T) {
+	mgr, _ := newTestManager(t)
+	server := &Server{deps: Dependencies{Bootstrap: mgr, AdminToken: ""}}
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/account/bootstrap", strings.NewReader(`{"method":"auto"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	server.handleAdminAccountBootstrap(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	var sess BootstrapSession
+	if err := json.Unmarshal(w.Body.Bytes(), &sess); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if sess.Method != "remote_callback" {
+		t.Errorf("method: got %q, want remote_callback", sess.Method)
+	}
+	_ = mgr.Cancel(sess.ID)
+}
+
+func TestHandleAdminAccountBootstrap_InvalidMethod(t *testing.T) {
+	mgr, _ := newTestManager(t)
+	server := &Server{deps: Dependencies{Bootstrap: mgr}}
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/account/bootstrap",
+		strings.NewReader(`{"method":"banana"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	server.handleAdminAccountBootstrap(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "invalid method") {
+		t.Errorf("expected invalid method error, got %s", w.Body.String())
+	}
+}
+
+func TestHandleAdminAccountBootstrap_DeleteCancelsSession(t *testing.T) {
+	mgr, _ := newTestManager(t)
+	server := &Server{deps: Dependencies{Bootstrap: mgr}}
+
+	sess, err := mgr.StartRemoteCallback()
+	if err != nil {
+		t.Fatalf("StartRemoteCallback: %v", err)
+	}
+	waitForStatus(t, mgr, sess.ID, 2*time.Second, "awaiting_callback")
+
+	req := httptest.NewRequest(http.MethodDelete, "/admin/account/bootstrap?id="+sess.ID, nil)
+	w := httptest.NewRecorder()
+	server.handleAdminAccountBootstrap(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d; body=%s", w.Code, w.Body.String())
+	}
+
+	final := waitForStatus(t, mgr, sess.ID, 2*time.Second, "cancelled")
+	if final.Status != "cancelled" {
+		t.Errorf("expected cancelled, got %s", final.Status)
+	}
+}
+
+func TestHandleAdminAccountBootstrap_DeleteSessionNotFound(t *testing.T) {
+	mgr, _ := newTestManager(t)
+	server := &Server{deps: Dependencies{Bootstrap: mgr}}
+
+	req := httptest.NewRequest(http.MethodDelete, "/admin/account/bootstrap?id=ghost", nil)
+	w := httptest.NewRecorder()
+	server.handleAdminAccountBootstrap(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", w.Code)
 	}
 }
