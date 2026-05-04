@@ -146,10 +146,15 @@ func (server *Server) nonStreamAnthropicResponse(
 	var contentBuilder strings.Builder
 	var reasoningBuilder strings.Builder
 	var rawSSELines []string
+	var inputTokens, outputTokens int
 	err := proxy.ScanSSEWithLines(stream, func(line string) error {
 		rawSSELines = append(rawSSELines, line)
 		return nil
 	}, func(event proxy.SSEEvent) error {
+		if event.Usage != nil {
+			inputTokens = event.Usage.PromptTokens
+			outputTokens = event.Usage.CompletionTokens
+		}
 		contentBuilder.WriteString(event.Content)
 		reasoningBuilder.WriteString(event.ReasoningContent)
 		return nil
@@ -184,9 +189,18 @@ func (server *Server) nonStreamAnthropicResponse(
 		})
 	}
 
+	// Use real tokens if available, otherwise fallback to chars/4
+	promptTokens := inputTokens
+	completionTokens := outputTokens
+	if promptTokens <= 0 && completionTokens <= 0 {
+		promptTokens = len(contentText)/4 + len(reasoningText)/4
+		completionTokens = len(contentText)/4 + len(reasoningText)/4
+	}
+	totalTokens := promptTokens + completionTokens
+
 	usage := proxy.Usage{
-		InputTokens:  len(contentText)/4 + len(reasoningText)/4,
-		OutputTokens: len(contentText)/4 + len(reasoningText)/4,
+		InputTokens:  promptTokens,
+		OutputTokens: completionTokens,
 	}
 
 	resp := proxy.AnthropicMessagesResponse{
@@ -219,7 +233,9 @@ func (server *Server) nonStreamAnthropicResponse(
 			assistant,
 			remoteRequest,
 			rawSSELines,
-			0, 0, 0, // real token counts (extracted in later tasks)
+			promptTokens,
+			completionTokens,
+			totalTokens,
 		)
 	}
 
@@ -269,6 +285,7 @@ func (server *Server) streamAnthropicResponse(
 	var contentBuilder strings.Builder
 	var reasoningBuilder strings.Builder
 	var rawSSELines []string
+	var inputTokens, outputTokens int
 
 	closeBlock := func() {
 		if !blockStarted {
@@ -287,6 +304,10 @@ func (server *Server) streamAnthropicResponse(
 		rawSSELines = append(rawSSELines, line)
 		return nil
 	}, func(event proxy.SSEEvent) error {
+		if event.Usage != nil {
+			inputTokens = event.Usage.PromptTokens
+			outputTokens = event.Usage.CompletionTokens
+		}
 		if event.Done {
 			return nil
 		}
@@ -400,11 +421,20 @@ func (server *Server) streamAnthropicResponse(
 
 	totalText := contentBuilder.String()
 	totalReasoning := reasoningBuilder.String()
-	outTokens := (len(totalText) + len(totalReasoning)) / 4
-	if outTokens == 0 {
-		outTokens = 1
+
+	// Use real tokens if available, otherwise fallback to chars/4
+	promptTokens := inputTokens
+	completionTokens := outputTokens
+	if completionTokens <= 0 {
+		completionTokens = (len(totalText) + len(totalReasoning)) / 4
+		if completionTokens == 0 {
+			completionTokens = 1
+		}
 	}
-	inTokens := outTokens * 2
+	if promptTokens <= 0 {
+		promptTokens = completionTokens * 2 // fallback
+	}
+	totalTokens := promptTokens + completionTokens
 
 	// message_delta
 	writeAnthropicSSE(writer, proxy.AnthropicStreamEvent{
@@ -413,8 +443,8 @@ func (server *Server) streamAnthropicResponse(
 			StopReason: "end_turn",
 		},
 		Usage: &proxy.Usage{
-			OutputTokens: outTokens,
-			InputTokens:  inTokens,
+			OutputTokens: completionTokens,
+			InputTokens:  promptTokens,
 		},
 	})
 	flusher.Flush()
@@ -446,7 +476,9 @@ func (server *Server) streamAnthropicResponse(
 			assistant,
 			remoteRequest,
 			rawSSELines,
-			0, 0, 0, // real token counts (extracted in later tasks)
+			promptTokens,
+			completionTokens,
+			totalTokens,
 		)
 	}
 }
