@@ -8,7 +8,6 @@ import { Dashboard } from './pages/Dashboard';
 import { Logs } from './pages/Logs';
 import { LogDetail } from './pages/LogDetail';
 import { Account } from './pages/Account';
-import { Models } from './pages/Models';
 import { Policies } from './pages/Policies';
 import { Settings } from './pages/Settings';
 
@@ -60,7 +59,7 @@ export default function App() {
           <Route path="/logs/:id" element={<LogDetail />} />
           <Route path="/account" element={<Account />} />
           <Route path="/policies" element={<Policies />} />
-          <Route path="/models" element={<Models />} />
+          <Route path="/models" element={<Navigate to="/policies" replace />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Route>
