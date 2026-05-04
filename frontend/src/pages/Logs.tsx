@@ -56,7 +56,7 @@ export function Logs() {
         <div className="card">
           <SkeletonTable rows={6} cols={6} />
         </div>
-      ) : data && data.items.length === 0 ? (
+      ) : !data || data.items.length === 0 ? (
         <div className="card">
           <EmptyState
             icon={Inbox}
