@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
+import { LogIn, RefreshCw } from 'lucide-react';
 import { getAccount, refreshAccount, startBootstrap, getBootstrapStatus } from '../api/client';
 import { StatCard } from '../components/StatCard';
+import { Skeleton } from '../components/Skeleton';
 import type { AccountData, BootstrapResponse } from '../types';
 
 export function Account() {
@@ -8,9 +10,12 @@ export function Account() {
   const [refreshing, setRefreshing] = useState(false);
   const [bootstrap, setBootstrap] = useState<BootstrapResponse | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval>>();
+  const [loading, setLoading] = useState(true);
 
   const load = async () => {
+    setLoading(true);
     try { setData(await getAccount()); } catch {}
+    setLoading(false);
   };
 
   useEffect(() => { load(); }, []);
@@ -35,7 +40,6 @@ export function Account() {
         return;
       }
 
-      // Start polling for status
       pollRef.current = setInterval(async () => {
         try {
           const status = await getBootstrapStatus(resp.id);
@@ -62,10 +66,18 @@ export function Account() {
   };
 
   const mask = (s: string) => s.length > 6 ? s.slice(0, 3) + '***' + s.slice(-3) : s;
-
-  if (!data) return <div>加载中...</div>;
-
   const fmtToken = (n: number) => n >= 1000000 ? `${(n / 1000000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String(n);
+
+  if (loading || !data) {
+    return (
+      <div>
+        <div className="page-header"><h2>账号管理</h2></div>
+        <Skeleton variant="rect" style={{ height: 120, marginBottom: 16 }} />
+        <Skeleton variant="rect" style={{ height: 160, marginBottom: 16 }} />
+        <Skeleton variant="rect" style={{ height: 120 }} />
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -73,9 +85,11 @@ export function Account() {
         <h2>账号管理</h2>
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-primary" onClick={handleBootstrap} disabled={bootstrap?.status === 'running'}>
+            <LogIn size={16} />
             {bootstrap?.status === 'running' ? '登录中...' : '重新登录 / 添加账号'}
           </button>
           <button className="btn" onClick={handleRefresh} disabled={refreshing}>
+            <RefreshCw size={16} />
             {refreshing ? '刷新中...' : '刷新凭据'}
           </button>
         </div>
