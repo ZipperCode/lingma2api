@@ -256,11 +256,18 @@ type RemoteChatRequest struct {
 	Stream    bool
 }
 
+type SSEUsage struct {
+	PromptTokens     int
+	CompletionTokens int
+	TotalTokens      int
+}
+
 type SSEEvent struct {
 	Content          string
 	ToolCalls        []ToolCall
 	ReasoningContent string
 	Done             bool
+	Usage            *SSEUsage
 }
 
 type UpstreamHTTPError struct {

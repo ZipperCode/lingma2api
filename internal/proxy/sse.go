@@ -21,6 +21,11 @@ type innerSSEPayload struct {
 			ToolCalls        []toolCallDelta `json:"tool_calls"`
 		} `json:"delta"`
 	} `json:"choices"`
+	Usage *struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+		TotalTokens      int `json:"total_tokens"`
+	} `json:"usage,omitempty"`
 }
 
 type toolCallDelta struct {
@@ -85,10 +90,19 @@ func ParseSSELine(line string) (SSEEvent, bool, error) {
 			})
 		}
 	}
+	var usage *SSEUsage
+	if inner.Usage != nil {
+		usage = &SSEUsage{
+			PromptTokens:     inner.Usage.PromptTokens,
+			CompletionTokens: inner.Usage.CompletionTokens,
+			TotalTokens:      inner.Usage.TotalTokens,
+		}
+	}
 	return SSEEvent{
 		Content:          contentBuilder.String(),
 		ReasoningContent: reasoningBuilder.String(),
 		ToolCalls:        toolCalls,
+		Usage:            usage,
 	}, true, nil
 }
 

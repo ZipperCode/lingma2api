@@ -70,6 +70,13 @@ type chatCompletionResponse struct {
 	Created int64                  `json:"created"`
 	Model   string                 `json:"model"`
 	Choices []chatCompletionChoice `json:"choices"`
+	Usage   *openAIUsage           `json:"usage,omitempty"`
+}
+
+type openAIUsage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
 }
 
 type chatCompletionChoice struct {
@@ -333,6 +340,29 @@ func (server *Server) handleChatCompletions(writer http.ResponseWriter, request 
 	)
 }
 
+func collectSSEContentWithUsage(reader io.Reader) (content string, rawLines []string, promptTokens, completionTokens, totalTokens int, err error) {
+	var builder strings.Builder
+	err = proxy.ScanSSEWithLines(reader, func(line string) error {
+		rawLines = append(rawLines, line)
+		return nil
+	}, func(event proxy.SSEEvent) error {
+		if event.Usage != nil {
+			promptTokens = event.Usage.PromptTokens
+			completionTokens = event.Usage.CompletionTokens
+			totalTokens = event.Usage.TotalTokens
+		}
+		builder.WriteString(event.Content)
+		return nil
+	})
+	if err != nil {
+		return "", nil, 0, 0, 0, err
+	}
+	if rawLines == nil {
+		rawLines = []string{}
+	}
+	return builder.String(), rawLines, promptTokens, completionTokens, totalTokens, nil
+}
+
 func (server *Server) writeNonStreamResponse(
 	ctx context.Context,
 	writer http.ResponseWriter,
@@ -345,7 +375,7 @@ func (server *Server) writeNonStreamResponse(
 	postPolicyRequest proxy.CanonicalRequest,
 	sessionCanonicalRequest proxy.CanonicalRequest,
 ) {
-	content, rawSSELines, err := proxy.CollectSSEContentWithLines(stream)
+	content, rawSSELines, promptTokens, completionTokens, totalTokens, err := collectSSEContentWithUsage(stream)
 	if err != nil {
 		writeMappedError(writer, err)
 		return
@@ -370,7 +400,9 @@ func (server *Server) writeNonStreamResponse(
 		assistant,
 		remoteRequest,
 		rawSSELines,
-		0, 0, 0, // real token counts (extracted in later tasks)
+		promptTokens,
+		completionTokens,
+		totalTokens,
 	)
 
 	finishReason := "stop"
@@ -388,6 +420,11 @@ func (server *Server) writeNonStreamResponse(
 				},
 				FinishReason: &finishReason,
 			},
+		},
+		Usage: &openAIUsage{
+			PromptTokens:     promptTokens,
+			CompletionTokens: completionTokens,
+			TotalTokens:      totalTokens,
 		},
 	})
 }
@@ -469,10 +506,16 @@ func (server *Server) streamChatResponse(
 
 	var contentBuilder strings.Builder
 	var rawSSELines []string
+	var promptTokens, completionTokens, totalTokens int
 	err := proxy.ScanSSEWithLines(stream, func(line string) error {
 		rawSSELines = append(rawSSELines, line)
 		return nil
 	}, func(event proxy.SSEEvent) error {
+		if event.Usage != nil {
+			promptTokens = event.Usage.PromptTokens
+			completionTokens = event.Usage.CompletionTokens
+			totalTokens = event.Usage.TotalTokens
+		}
 		if event.Done {
 			return nil
 		}
@@ -565,7 +608,9 @@ func (server *Server) streamChatResponse(
 		assistant,
 		remoteRequest,
 		rawSSELines,
-		0, 0, 0, // real token counts (extracted in later tasks)
+		promptTokens,
+		completionTokens,
+		totalTokens,
 	)
 
 	finishReason := "stop"
