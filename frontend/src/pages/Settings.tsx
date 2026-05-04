@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { Save, Download, Trash2, KeyRound } from 'lucide-react';
 import { getSettings, updateSettings, cleanupLogs } from '../api/client';
 import { useSettings } from '../hooks/useSettings';
 import { useAdminToken } from '../hooks/useAdminToken';
@@ -123,7 +124,9 @@ export function Settings() {
           <label>Admin Token（留空表示无 token）</label>
           <div style={{ display: 'flex', gap: 8 }}>
             <input className="input" type="password" value={newToken} onChange={e => setNewToken(e.target.value)} placeholder={token ? '••••••••' : '未设置'} style={{ flex: 1 }} />
-            <button className="btn" onClick={handleTokenChange}>变更</button>
+            <button className="btn" onClick={handleTokenChange}>
+              <KeyRound size={16} /> 变更
+            </button>
           </div>
         </div>
       </div>
@@ -131,13 +134,20 @@ export function Settings() {
       <div className="card" style={{ marginBottom: 16 }}>
         <h4 style={{ marginBottom: 12 }}>数据</h4>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button className="btn" onClick={handleExportLogs}>📥 导出请求日志</button>
-          <button className="btn" onClick={handleExportStats}>📥 导出统计数据</button>
-          <button className="btn btn-danger" onClick={handleCleanup}>🗑 清理过期日志</button>
+          <button className="btn" onClick={handleExportLogs}>
+            <Download size={16} /> 导出请求日志
+          </button>
+          <button className="btn" onClick={handleExportStats}>
+            <Download size={16} /> 导出统计数据
+          </button>
+          <button className="btn btn-danger" onClick={handleCleanup}>
+            <Trash2 size={16} /> 清理过期日志
+          </button>
         </div>
       </div>
 
       <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
+        {saving ? <span className="spinner spinner-sm" style={{ marginRight: 6, verticalAlign: 'middle', borderTopColor: 'white' }} /> : <Save size={16} />}
         {saving ? '保存中...' : '保存设置'}
       </button>
     </div>
