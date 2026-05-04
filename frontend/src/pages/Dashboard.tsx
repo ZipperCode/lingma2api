@@ -1,9 +1,11 @@
 import { useState, useCallback, useEffect } from 'react';
 import { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+import { RefreshCw, Clock, Activity, Zap, BarChart3, PieChartIcon } from 'lucide-react';
 import { getDashboard } from '../api/client';
 import { usePolling } from '../hooks/usePolling';
 import { useSettings } from '../hooks/useSettings';
 import { StatCard } from '../components/StatCard';
+import { Skeleton } from '../components/Skeleton';
 import type { DashboardData } from '../types';
 
 const RANGES = ['1h', '24h', '7d', '30d'];
@@ -13,20 +15,42 @@ export function Dashboard() {
   const { settings } = useSettings();
   const [range, setRange] = useState('24h');
   const [data, setData] = useState<DashboardData | null>(null);
+  const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
+    setLoading(true);
     try { setData(await getDashboard(range)); } catch {}
+    setLoading(false);
   }, [range]);
 
   const pollInterval = parseInt(settings.polling_interval || '0', 10);
   usePolling(load, pollInterval);
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, [range]);
 
-  if (!data) return <div>加载中...</div>;
-
   const fmtToken = (n: number) => n >= 1000000 ? `${(n / 1000000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String(n);
+
+  if (loading || !data) {
+    return (
+      <div>
+        <div className="page-header">
+          <h2>仪表盘</h2>
+        </div>
+        <div className="stat-grid">
+          <Skeleton variant="rect" style={{ height: 100 }} />
+          <Skeleton variant="rect" style={{ height: 100 }} />
+          <Skeleton variant="rect" style={{ height: 100 }} />
+          <Skeleton variant="rect" style={{ height: 100 }} />
+        </div>
+        <div className="dashboard-chart-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+          <Skeleton variant="rect" style={{ height: 260 }} />
+          <Skeleton variant="rect" style={{ height: 260 }} />
+          <Skeleton variant="rect" style={{ height: 260 }} />
+          <Skeleton variant="rect" style={{ height: 260 }} />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -36,61 +60,68 @@ export function Dashboard() {
           <select className="input" value={range} onChange={e => setRange(e.target.value)}>
             {RANGES.map(r => <option key={r} value={r}>{r}</option>)}
           </select>
-          <button className="btn" onClick={load}>🔄 刷新</button>
-          {pollInterval > 0 && <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>自动 {pollInterval}s</span>}
+          <button className="btn" onClick={load}>
+            <RefreshCw size={16} /> 刷新
+          </button>
+          {pollInterval > 0 && (
+            <span style={{ fontSize: 12, color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 4 }}>
+              <Clock size={12} /> 自动 {pollInterval}s
+            </span>
+          )}
         </div>
       </div>
 
       <div className="stat-grid">
-        <StatCard label="总请求数" value={data.stats.total_requests.toLocaleString()} />
-        <StatCard label="成功率" value={data.stats.success_rate.toFixed(1)} suffix="%" />
-        <StatCard label="平均 TTFT" value={data.stats.avg_ttft_ms} suffix="ms" />
-        <StatCard label="Token 消耗" value={fmtToken(data.stats.total_tokens)} />
+        <StatCard label="总请求数" value={data.stats.total_requests.toLocaleString()} icon={Activity} />
+        <StatCard label="成功率" value={data.stats.success_rate.toFixed(1)} suffix="%" icon={BarChart3} />
+        <StatCard label="平均 TTFT" value={data.stats.avg_ttft_ms} suffix="ms" icon={Zap} />
+        <StatCard label="Token 消耗" value={fmtToken(data.stats.total_tokens)} icon={PieChartIcon} />
       </div>
 
-      <div className="card" style={{ marginBottom: 16 }}>
-        <h4 style={{ marginBottom: 12 }}>成功率趋势</h4>
-        <ResponsiveContainer width="100%" height={200}>
-          <LineChart data={data.success_rate_series}>
-            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-            <XAxis dataKey="time" tick={{ fontSize: 11 }} tickFormatter={t => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} />
-            <YAxis domain={[0, 100]} tick={{ fontSize: 11 }} />
-            <Tooltip />
-            <Line type="monotone" dataKey="rate" stroke="var(--primary)" strokeWidth={2} dot={false} />
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
+      <div className="dashboard-chart-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+        <div className="card">
+          <h4 style={{ marginBottom: 12 }}>成功率趋势</h4>
+          <ResponsiveContainer width="100%" height={260}>
+            <LineChart data={data.success_rate_series}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+              <XAxis dataKey="time" tick={{ fontSize: 11 }} tickFormatter={t => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} />
+              <YAxis domain={[0, 100]} tick={{ fontSize: 11 }} />
+              <Tooltip />
+              <Line type="monotone" dataKey="rate" stroke="var(--primary)" strokeWidth={2} dot={false} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
 
-      <div className="card" style={{ marginBottom: 16 }}>
-        <h4 style={{ marginBottom: 12 }}>Token 趋势</h4>
-        <ResponsiveContainer width="100%" height={200}>
-          <BarChart data={data.token_series}>
-            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-            <XAxis dataKey="time" tick={{ fontSize: 11 }} tickFormatter={t => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} />
-            <YAxis tick={{ fontSize: 11 }} />
-            <Tooltip />
-            <Legend />
-            <Bar dataKey="prompt" fill="#4361ee" name="Prompt" stackId="a" />
-            <Bar dataKey="completion" fill="#2d6a4f" name="Completion" stackId="a" />
-          </BarChart>
-        </ResponsiveContainer>
-      </div>
+        <div className="card">
+          <h4 style={{ marginBottom: 12 }}>Token 趋势</h4>
+          <ResponsiveContainer width="100%" height={260}>
+            <BarChart data={data.token_series}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+              <XAxis dataKey="time" tick={{ fontSize: 11 }} tickFormatter={t => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} />
+              <YAxis tick={{ fontSize: 11 }} />
+              <Tooltip />
+              <Legend />
+              <Bar dataKey="prompt" fill="#4361ee" name="Prompt" stackId="a" />
+              <Bar dataKey="completion" fill="#2d6a4f" name="Completion" stackId="a" />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
         <div className="card">
           <h4 style={{ marginBottom: 12 }}>模型分布</h4>
-          <ResponsiveContainer width="100%" height={200}>
+          <ResponsiveContainer width="100%" height={260}>
             <PieChart>
-              <Pie data={data.model_distribution} dataKey="count" nameKey="model" cx="50%" cy="50%" outerRadius={80} label>
+              <Pie data={data.model_distribution} dataKey="count" nameKey="model" cx="50%" cy="50%" outerRadius={90} label>
                 {data.model_distribution.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
               </Pie>
               <Tooltip />
             </PieChart>
           </ResponsiveContainer>
         </div>
+
         <div className="card">
           <h4 style={{ marginBottom: 12 }}>Top 模型</h4>
-          <ResponsiveContainer width="100%" height={200}>
+          <ResponsiveContainer width="100%" height={260}>
             <BarChart data={data.model_distribution.slice(0, 6)} layout="vertical">
               <XAxis type="number" tick={{ fontSize: 11 }} />
               <YAxis type="category" dataKey="model" tick={{ fontSize: 11 }} width={120} />
