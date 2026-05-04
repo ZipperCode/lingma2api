@@ -145,28 +145,6 @@ func NewServer(deps Dependencies, store *db.Store) http.Handler {
 	mux.HandleFunc("/admin/logs/cleanup", server.handleAdminLogsCleanup)
 	mux.HandleFunc("/admin/logs/export", server.handleAdminLogsExport)
 	mux.HandleFunc("/admin/stats/export", server.handleAdminStatsExport)
-	mux.HandleFunc("/admin/mappings", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet {
-			server.handleAdminMappingsList(w, r)
-		} else if r.Method == http.MethodPost {
-			server.handleAdminMappingsCreate(w, r)
-		} else {
-			writeMethodNotAllowed(w, "GET, POST")
-		}
-	})
-	mux.HandleFunc("/admin/mappings/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/admin/mappings/test" {
-			server.handleAdminMappingsTest(w, r)
-			return
-		}
-		if r.Method == http.MethodPut {
-			server.handleAdminMappingsUpdate(w, r)
-		} else if r.Method == http.MethodDelete {
-			server.handleAdminMappingsDelete(w, r)
-		} else {
-			writeMethodNotAllowed(w, "PUT, DELETE")
-		}
-	})
 	mux.HandleFunc("/admin/policies", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			server.handleAdminPoliciesList(w, r)
