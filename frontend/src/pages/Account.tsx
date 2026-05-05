@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { LogIn, RefreshCw, X, Cpu, Globe } from 'lucide-react';
+import { RefreshCw, X, Cpu, Globe } from 'lucide-react';
 import { getAccount, refreshAccount, startBootstrap, getBootstrapStatus, cancelBootstrap } from '../api/client';
 import { StatCard } from '../components/StatCard';
 import { Skeleton } from '../components/Skeleton';
@@ -137,12 +137,12 @@ export function Account() {
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <button
             className="btn btn-primary"
-            onClick={() => handleBootstrap('oauth')}
+            onClick={() => handleBootstrap('remote_callback')}
             disabled={inFlight}
-            title="使用 OAuth 浏览器登录，需要 config.yaml 配置 lingma.client_id"
+            title="启动一次性 127.0.0.1:37510 回调，浏览器登录后自动写入凭据，无需本地灵码客户端"
           >
-            <LogIn size={16} />
-            OAuth 登录
+            <Globe size={16} />
+            浏览器登录
           </button>
           <button
             className="btn"
@@ -152,15 +152,6 @@ export function Account() {
           >
             <Cpu size={16} />
             本地灵码
-          </button>
-          <button
-            className="btn"
-            onClick={() => handleBootstrap('remote_callback')}
-            disabled={inFlight}
-            title="启动一次性 127.0.0.1:37510 回调，浏览器登录后自动写入凭据，无需 client_id 也无需本地灵码"
-          >
-            <Globe size={16} />
-            远程登录
           </button>
           <button className="btn" onClick={handleRefresh} disabled={refreshing}>
             <RefreshCw size={16} />
@@ -221,11 +212,8 @@ export function Account() {
               {bootstrap.error?.includes('all remote login strategies failed') && (
                 <span> 远程派生 cosy_key 失败（可能被 WAF 拦截），请稍后重试或联系管理员。</span>
               )}
-              {bootstrap.method === 'oauth' && bootstrap.error?.includes('client_id') && (
-                <span> 请先在 config.yaml 的 lingma 区块配置 client_id，或改用「远程登录」/「本地灵码」。</span>
-              )}
               {bootstrap.method === 'ws' && bootstrap.error?.toLowerCase().includes('websocket') && (
-                <span> 请确保本机灵码客户端正在运行（端口 37010），或改用「OAuth 登录」/「远程登录」。</span>
+                <span> 请确保本机灵码客户端正在运行（端口 37010），或改用「浏览器登录」。</span>
               )}
             </p>
           )}

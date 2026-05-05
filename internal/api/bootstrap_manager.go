@@ -30,133 +30,20 @@ type BootstrapManager struct {
 	mu         sync.Mutex
 	sessions   map[string]*BootstrapSession
 	authFile   string
-	clientID   string
 	listenAddr string
 	lingmaVer  string
 }
 
-func NewBootstrapManager(authFile, clientID, listenAddr, lingmaVer string) *BootstrapManager {
+func NewBootstrapManager(authFile, listenAddr, lingmaVer string) *BootstrapManager {
 	if listenAddr == "" {
 		listenAddr = "127.0.0.1:37510"
 	}
 	return &BootstrapManager{
 		sessions:   make(map[string]*BootstrapSession),
 		authFile:   authFile,
-		clientID:   clientID,
 		listenAddr: listenAddr,
 		lingmaVer:  lingmaVer,
 	}
-}
-
-func (m *BootstrapManager) StartOAuth() (*BootstrapSession, error) {
-	if m.clientID == "" {
-		return nil, fmt.Errorf("client_id not configured")
-	}
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	redirectURL, err := auth.CallbackURLFromListenAddr(m.listenAddr)
-	if err != nil {
-		return nil, err
-	}
-
-	authorizeURL, state, verifier, err := auth.BuildAuthorizeURL(auth.AuthorizeConfig{
-		ClientID:    m.clientID,
-		RedirectURL: redirectURL,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("build authorize url: %w", err)
-	}
-
-	id := newSessionID()
-	sess := &BootstrapSession{
-		ID:        id,
-		Status:    "running",
-		Method:    "oauth",
-		AuthURL:   authorizeURL,
-		StartedAt: time.Now(),
-	}
-	m.sessions[id] = sess
-
-	go m.runOAuthFlow(id, state, verifier, redirectURL)
-
-	return sess, nil
-}
-
-func (m *BootstrapManager) runOAuthFlow(id, state, verifier, redirectURL string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-
-	capture, err := auth.WaitForCallback(ctx, m.listenAddr, "/callback")
-	if err != nil {
-		m.updateSession(id, "error", fmt.Sprintf("wait for callback: %v", err))
-		return
-	}
-
-	code := capture.Query.Get("code")
-	if code == "" {
-		m.updateSession(id, "error", "callback did not contain authorization code")
-		return
-	}
-
-	tokens, err := auth.ExchangeCodeForTokens(ctx, auth.TokenExchangeConfig{
-		Code:         code,
-		RedirectURL:  redirectURL,
-		ClientID:     m.clientID,
-		CodeVerifier: verifier,
-	})
-	if err != nil {
-		m.updateSession(id, "error", fmt.Sprintf("token exchange: %v", err))
-		return
-	}
-
-	userID := ""
-	username := ""
-	if tokens.IDToken != "" {
-		claims, err := auth.DecodeIDTokenClaims(tokens.IDToken)
-		if err == nil {
-			userID = claims.Sub
-			username = claims.Name
-			if username == "" {
-				username = claims.Email
-			}
-		}
-	}
-
-	expireMs := ""
-	if tokens.ExpiresIn > 0 {
-		expireMs = fmt.Sprintf("%d", time.Now().UnixMilli()+int64(tokens.ExpiresIn)*1000)
-	}
-
-	machineID := auth.NewMachineID()
-
-	stored, err := auth.DeriveCredentialsRemotely(auth.RemoteLoginConfig{
-		AccessToken:   tokens.AccessToken,
-		RefreshToken:  tokens.RefreshToken,
-		UserID:        userID,
-		Username:      username,
-		MachineID:     machineID,
-		TokenExpireMs: expireMs,
-	})
-	if err != nil {
-		m.updateSession(id, "error", fmt.Sprintf("derive credentials: %v", err))
-		return
-	}
-
-	if userID != "" && stored.Auth.UserID == "" {
-		stored.Auth.UserID = userID
-	}
-	if stored.Auth.MachineID == "" {
-		stored.Auth.MachineID = machineID
-	}
-
-	if err := auth.SaveCredentialFile(m.authFile, stored); err != nil {
-		m.updateSession(id, "error", fmt.Sprintf("save credentials: %v", err))
-		return
-	}
-
-	m.updateSession(id, "completed", "")
 }
 
 func (m *BootstrapManager) StartWS() (*BootstrapSession, error) {
@@ -307,23 +194,19 @@ func (m *BootstrapManager) findActiveLocked() *BootstrapSession {
 }
 
 // Start dispatches to the requested bootstrap method. Empty/auto runs the
-// fallback chain: oauth (when client_id configured) → remote_callback → ws.
-// Each candidate that fails its precondition synchronously is skipped without
-// entering the running state.
+// fallback chain: remote_callback → ws.
+//
+// The standard OAuth grant path (oauth2/v1/auth + oauth.alibabacloud.com/v1/token)
+// is not used: Lingma's real flow runs against devops.aliyun.com/lingma/login
+// (server-injected client_id) and DeriveCredentialsRemotely against
+// /api/v3/user/login. See docs/topics/callback-37510-simulation.md.
 func (m *BootstrapManager) Start(method string) (*BootstrapSession, error) {
 	switch method {
 	case "", "auto":
-		if m.clientID != "" {
-			if s, err := m.StartOAuth(); err == nil {
-				return s, nil
-			}
-		}
 		if s, err := m.StartRemoteCallback(); err == nil {
 			return s, nil
 		}
 		return m.StartWS()
-	case "oauth":
-		return m.StartOAuth()
 	case "ws":
 		return m.StartWS()
 	case "remote_callback":

@@ -45,16 +45,10 @@ func main() {
 		}
 	}
 
-	// Setup auto-refresh: OAuth (if client_id available) -> WebSocket fallback
-	var refresher auth.TokenRefresher
-	if cfg.Lingma.ClientID != "" {
-		refresher = auth.NewMultiRefresher(
-			&auth.OAuthRefresher{ClientID: cfg.Lingma.ClientID},
-			&auth.WSRefresher{},
-		)
-	} else {
-		refresher = &auth.WSRefresher{}
-	}
+	// Setup auto-refresh: local Lingma WebSocket. The standard OAuth refresh
+	// grant is not used — Lingma refresh goes through LSP auth/refreshToken,
+	// not oauth.alibabacloud.com/v1/token.
+	refresher := &auth.WSRefresher{}
 	credentials.SetRefreshFn(func(ctx context.Context) error {
 		return auth.RefreshAndSave(ctx, cfg.Credential.AuthFile, refresher, true, "")
 	})
@@ -117,7 +111,6 @@ func main() {
 
 	bootstrapMgr := api.NewBootstrapManager(
 		cfg.Credential.AuthFile,
-		cfg.Lingma.ClientID,
 		cfg.Lingma.OAuthListenAddr,
 		cfg.Lingma.CosyVersion,
 	)

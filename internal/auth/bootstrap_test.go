@@ -12,28 +12,6 @@ import (
 	"time"
 )
 
-func TestBuildAuthorizeURLIncludesStateAndChallenge(t *testing.T) {
-	url, state, verifier, err := BuildAuthorizeURL(AuthorizeConfig{
-		ClientID:    "client-123",
-		RedirectURL: "http://127.0.0.1:38080/callback",
-	})
-	if err != nil {
-		t.Fatalf("BuildAuthorizeURL() error = %v", err)
-	}
-	if state == "" {
-		t.Fatal("expected state")
-	}
-	if verifier == "" {
-		t.Fatal("expected verifier")
-	}
-	if !strings.Contains(url, "code_challenge=") {
-		t.Fatalf("expected code challenge in url: %s", url)
-	}
-	if !strings.Contains(url, "client_id=client-123") {
-		t.Fatalf("expected client_id in url: %s", url)
-	}
-}
-
 func TestBuildLingmaLoginEntryURL(t *testing.T) {
 	loginURL, state, verifier, err := BuildLingmaLoginEntryURL(LingmaLoginEntryConfig{
 		MachineID: "abc-123",

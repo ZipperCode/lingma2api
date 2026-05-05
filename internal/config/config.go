@@ -33,7 +33,6 @@ type LingmaConfig struct {
 	BaseURL         string
 	CosyVersion     string
 	Transport       string
-	ClientID        string
 	OAuthListenAddr string
 }
 
@@ -200,7 +199,10 @@ func assignLingmaValue(cfg *LingmaConfig, key, value string) error {
 	case "transport":
 		cfg.Transport = value
 	case "client_id":
-		cfg.ClientID = value
+		// Deprecated: Lingma's real auth flow does not use a standard OAuth
+		// client_id (the server injects it in the 302 chain). Silently
+		// ignored for backward compatibility with existing config.yaml files.
+		_ = value
 	case "oauth_listen_addr":
 		cfg.OAuthListenAddr = value
 	default:

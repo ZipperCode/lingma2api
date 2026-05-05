@@ -165,7 +165,7 @@ export interface AccountData {
   };
 }
 
-export type BootstrapMethod = 'auto' | 'oauth' | 'ws' | 'remote_callback';
+export type BootstrapMethod = 'auto' | 'ws' | 'remote_callback';
 
 export type BootstrapStatus =
   | 'running'

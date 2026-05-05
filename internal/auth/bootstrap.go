@@ -14,36 +14,6 @@ import (
 	"time"
 )
 
-func BuildAuthorizeURL(cfg AuthorizeConfig) (string, string, string, error) {
-	if cfg.ClientID == "" {
-		return "", "", "", errors.New("missing client_id")
-	}
-	if cfg.RedirectURL == "" {
-		return "", "", "", errors.New("missing redirect_url")
-	}
-	scope := cfg.Scope
-	if scope == "" {
-		scope = "openid aliuid profile"
-	}
-	baseURL := cfg.AuthBaseURL
-	if baseURL == "" {
-		baseURL = "https://signin.alibabacloud.com/oauth2/v1/auth"
-	}
-
-	state := GenerateState()
-	verifier, challenge := GeneratePKCE()
-	values := url.Values{}
-	values.Set("response_type", "code")
-	values.Set("client_id", cfg.ClientID)
-	values.Set("redirect_uri", cfg.RedirectURL)
-	values.Set("scope", scope)
-	values.Set("state", state)
-	values.Set("code_challenge", challenge)
-	values.Set("code_challenge_method", "S256")
-
-	return baseURL + "?" + values.Encode(), state, verifier, nil
-}
-
 // LingmaLoginEntryConfig 用于生成 Lingma 服务器侧登录入口 URL（不含 client_id）。
 // Lingma 服务器在收到该 URL 后会注入 client_id 并 302 到 signin.alibabacloud.com/oauth2/v1/auth，
 // 在浏览器抓取该跳转链是目前公认的 client_id 提取路径。
