@@ -1,9 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
-import { LogIn, RefreshCw, X } from 'lucide-react';
+import { LogIn, RefreshCw, X, Cpu, Globe } from 'lucide-react';
 import { getAccount, refreshAccount, startBootstrap, getBootstrapStatus, cancelBootstrap } from '../api/client';
 import { StatCard } from '../components/StatCard';
 import { Skeleton } from '../components/Skeleton';
-import type { AccountData, BootstrapResponse } from '../types';
+import type { AccountData, BootstrapMethod, BootstrapResponse } from '../types';
 
 export function Account() {
   const [data, setData] = useState<AccountData | null>(null);
@@ -62,9 +62,9 @@ export function Account() {
     setRefreshing(false);
   };
 
-  const handleBootstrap = async () => {
+  const handleBootstrap = async (method: BootstrapMethod) => {
     try {
-      const resp = await startBootstrap();
+      const resp = await startBootstrap(method);
       setBootstrap(resp);
 
       if (resp.status === 'completed') {
@@ -90,7 +90,7 @@ export function Account() {
       setBootstrap({
         id: '',
         status: 'error',
-        method: '',
+        method,
         error: e instanceof Error ? e.message : String(e),
         started_at: '',
       });
@@ -114,6 +114,10 @@ export function Account() {
 
   const mask = (s: string) => s.length > 6 ? s.slice(0, 3) + '***' + s.slice(-3) : s;
   const fmtToken = (n: number) => n >= 1000000 ? `${(n / 1000000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String(n);
+  const inFlight =
+    bootstrap?.status === 'running' ||
+    bootstrap?.status === 'awaiting_callback' ||
+    bootstrap?.status === 'deriving';
 
   if (loading || !data) {
     return (
@@ -130,13 +134,33 @@ export function Account() {
     <div>
       <div className="page-header">
         <h2>账号管理</h2>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-primary" onClick={handleBootstrap}
-            disabled={bootstrap?.status === 'running' || bootstrap?.status === 'awaiting_callback' || bootstrap?.status === 'deriving'}>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button
+            className="btn btn-primary"
+            onClick={() => handleBootstrap('oauth')}
+            disabled={inFlight}
+            title="使用 OAuth 浏览器登录，需要 config.yaml 配置 lingma.client_id"
+          >
             <LogIn size={16} />
-            {bootstrap?.status === 'running' || bootstrap?.status === 'awaiting_callback' || bootstrap?.status === 'deriving'
-              ? '登录中...'
-              : '重新登录 / 添加账号'}
+            OAuth 登录
+          </button>
+          <button
+            className="btn"
+            onClick={() => handleBootstrap('ws')}
+            disabled={inFlight}
+            title="连接本机灵码客户端（监听 127.0.0.1:37010）派生凭据"
+          >
+            <Cpu size={16} />
+            本地灵码
+          </button>
+          <button
+            className="btn"
+            onClick={() => handleBootstrap('remote_callback')}
+            disabled={inFlight}
+            title="启动一次性 127.0.0.1:37510 回调，浏览器登录后自动写入凭据，无需 client_id 也无需本地灵码"
+          >
+            <Globe size={16} />
+            远程登录
           </button>
           <button className="btn" onClick={handleRefresh} disabled={refreshing}>
             <RefreshCw size={16} />
@@ -197,8 +221,11 @@ export function Account() {
               {bootstrap.error?.includes('all remote login strategies failed') && (
                 <span> 远程派生 cosy_key 失败（可能被 WAF 拦截），请稍后重试或联系管理员。</span>
               )}
-              {bootstrap.error?.includes('client_id') && (
-                <span> 请先在 config.yaml 的 lingma 区块配置 client_id，或启动本地灵码客户端后重试。</span>
+              {bootstrap.method === 'oauth' && bootstrap.error?.includes('client_id') && (
+                <span> 请先在 config.yaml 的 lingma 区块配置 client_id，或改用「远程登录」/「本地灵码」。</span>
+              )}
+              {bootstrap.method === 'ws' && bootstrap.error?.toLowerCase().includes('websocket') && (
+                <span> 请确保本机灵码客户端正在运行（端口 37010），或改用「OAuth 登录」/「远程登录」。</span>
               )}
             </p>
           )}
