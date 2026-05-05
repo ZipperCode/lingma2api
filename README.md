@@ -99,6 +99,14 @@ chmod +x ./import-auth.sh    # 首次执行
 - `GET /admin/sessions`
 - `DELETE /admin/sessions/{id}`
 
+### Vision 输入（骨架）
+
+- 接受 OpenAI `image_url` 与 Anthropic `image` content block 的入站解析与限额校验。
+- **默认行为**：含图请求返回 `501 vision_not_implemented`（OpenAI）/ `not_supported_yet`（Anthropic）。
+- **软兜底**：在 `/admin/settings` 中设置 `vision_fallback_enabled=true`，含图请求会把图片元数据合并入文本继续处理（模型不会真正看见图）。
+- **限额**：单图 5 MB / 单请求 4 张 / 单请求总 10 MB；白名单 `image/png|jpeg|gif|webp`。
+- **真发图能力**：尚未实现，待后续反向 Lingma 远端 `image_urls` 字段格式后接线。
+
 ## 运行态认证边界
 
 运行态只读取当前项目内的认证文件：
@@ -238,3 +246,4 @@ curl -N http://127.0.0.1:8080/v1/chat/completions \
 - 当前远端传输依赖本机可执行的 `curl`
 - 当前实现仅覆盖最小 OpenAI Chat Completions 子集
 - `/admin/refresh` 当前返回 `501`，提示重新执行 bootstrap
+- Vision：当前仅有协议骨架。真发图（`image_urls` 字段）需等待反向任务交付。
