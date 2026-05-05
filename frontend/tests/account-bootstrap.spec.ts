@@ -30,7 +30,7 @@ test.describe('Account bootstrap remote_callback flow', () => {
 
     await page.goto('/');
     await page.click('a:has-text("账号")');
-    await page.click('button:has-text("远程登录")');
+    await page.click('button:has-text("浏览器登录")');
 
     await expect(page.getByText(BOOTSTRAP_RESPONSE.auth_url)).toBeVisible();
     await expect(page.getByRole('button', { name: /取消/ })).toBeVisible();
@@ -55,7 +55,7 @@ test.describe('Account bootstrap remote_callback flow', () => {
 
     await page.goto('/');
     await page.click('a:has-text("账号")');
-    await page.click('button:has-text("远程登录")');
+    await page.click('button:has-text("浏览器登录")');
     await page.click('button:has-text("取消")');
 
     await expect.poll(() => deleteCalled).toBe(true);
@@ -71,17 +71,16 @@ test.describe('Account bootstrap remote_callback flow', () => {
 
     await page.goto('/');
     await page.click('a:has-text("账号")');
-    await page.click('button:has-text("远程登录")');
+    await page.click('button:has-text("浏览器登录")');
 
     await expect(page.getByText(/timeout/i)).toBeVisible();
     await expect(page.getByText(/5 分钟内未完成/)).toBeVisible();
   });
 
-  test.describe('three-button method dispatch', () => {
-    const cases: Array<{ label: string; method: 'oauth' | 'ws' | 'remote_callback' }> = [
-      { label: 'OAuth 登录', method: 'oauth' },
+  test.describe('two-button method dispatch', () => {
+    const cases: Array<{ label: string; method: 'ws' | 'remote_callback' }> = [
+      { label: '浏览器登录', method: 'remote_callback' },
       { label: '本地灵码', method: 'ws' },
-      { label: '远程登录', method: 'remote_callback' },
     ];
 
     for (const c of cases) {

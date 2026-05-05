@@ -25,42 +25,6 @@ type TokenRefresher interface {
 	Name() string
 }
 
-// OAuthRefresher uses direct OAuth refresh_token grant (requires client_id).
-type OAuthRefresher struct {
-	ClientID string
-}
-
-func (r *OAuthRefresher) Name() string { return "oauth" }
-
-func (r *OAuthRefresher) Refresh(ctx context.Context, stored proxy.StoredCredentialFile) (TokenRefreshResult, error) {
-	if r.ClientID == "" {
-		return TokenRefreshResult{}, fmt.Errorf("client_id not configured")
-	}
-	if stored.OAuth.RefreshToken == "" {
-		return TokenRefreshResult{}, fmt.Errorf("refresh_token missing")
-	}
-
-	tokens, err := RefreshTokens(ctx, RefreshTokenConfig{
-		RefreshToken: stored.OAuth.RefreshToken,
-		ClientID:     r.ClientID,
-	})
-	if err != nil {
-		return TokenRefreshResult{}, fmt.Errorf("oauth refresh: %w", err)
-	}
-
-	expireMs := int64(0)
-	if tokens.ExpiresIn > 0 {
-		expireMs = time.Now().UnixMilli() + int64(tokens.ExpiresIn)*1000
-	}
-
-	return TokenRefreshResult{
-		AccessToken:  tokens.AccessToken,
-		RefreshToken: tokens.RefreshToken,
-		ExpireTime:   expireMs,
-		Source:       "oauth_refresh",
-	}, nil
-}
-
 // WSRefresher uses local Lingma WebSocket for token refresh.
 type WSRefresher struct {
 	SocketPort int

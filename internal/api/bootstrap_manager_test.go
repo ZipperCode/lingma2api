@@ -6,8 +6,8 @@ import (
 	"time"
 )
 
-func TestBootstrapManager_StartAuto_FallsBackToRemoteCallback_NoClientID(t *testing.T) {
-	mgr, _ := newTestManager(t) // clientID=""
+func TestBootstrapManager_StartAuto_PrefersRemoteCallback(t *testing.T) {
+	mgr, _ := newTestManager(t)
 
 	sess, err := mgr.Start("auto")
 	if err != nil {

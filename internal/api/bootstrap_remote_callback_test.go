@@ -36,7 +36,7 @@ func newTestManager(t *testing.T) (*BootstrapManager, string) {
 	authFile := filepath.Join(dir, "credentials.json")
 	port := freePort(t)
 	listenAddr := "127.0.0.1:" + port
-	mgr := NewBootstrapManager(authFile, "", listenAddr, "2.11.2")
+	mgr := NewBootstrapManager(authFile, listenAddr, "2.11.2")
 	return mgr, listenAddr
 }
 
