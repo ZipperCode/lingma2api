@@ -250,7 +250,11 @@ func (server *Server) handleChatCompletions(writer http.ResponseWriter, request 
 		writeOpenAIInvalidImage(writer, err.Error())
 		return
 	}
-	if _, err := evaluateVisionGate(request.Context(), server.db, canonicalRequest); err != nil {
+	var visionStore SettingsStore
+	if server.db != nil {
+		visionStore = server.db
+	}
+	if _, err := evaluateVisionGate(request.Context(), visionStore, canonicalRequest); err != nil {
 		if errors.Is(err, ErrVisionNotImplemented) {
 			writeOpenAIVisionNotImplemented(writer)
 			return

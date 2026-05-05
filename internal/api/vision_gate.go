@@ -24,16 +24,21 @@ type SettingsStore interface {
 //
 // Returns:
 //   - (false, nil) when the request has no vision content; caller proceeds normally.
-//   - (true, nil)  when fallback is enabled; caller proceeds and the existing
+//   - (true, nil)  when fallback is enabled or no settings backend is wired
+//     (lightweight/embedded use); caller proceeds and the existing
 //     mediaBlockToText projection compresses images into text.
-//   - (false, ErrVisionNotImplemented) when fallback is disabled OR when the
-//     settings store fails (conservative).
+//   - (false, ErrVisionNotImplemented) when fallback is explicitly disabled OR
+//     when the settings store fails (conservative).
 func evaluateVisionGate(ctx context.Context, store SettingsStore, req proxy.CanonicalRequest) (bool, error) {
 	if !canonicalRequestHasVisionContent(req) {
 		return false, nil
 	}
 	if store == nil {
-		return false, ErrVisionNotImplemented
+		// No settings backend wired (e.g., legacy/embedded callers, lightweight
+		// tests). Preserve legacy soft-fallback semantics to avoid breaking
+		// existing consumers; explicit production deployments wire a real store
+		// and can opt into 501 by leaving vision_fallback_enabled=false.
+		return true, nil
 	}
 	settings, err := store.GetSettings(ctx)
 	if err != nil {
