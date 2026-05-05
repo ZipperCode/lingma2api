@@ -96,7 +96,37 @@ func CanonicalizeOpenAIRequest(req OpenAIChatRequest, sessionID string) (Canonic
 		}
 		switch message.Role {
 		case "system", "user":
-			if message.Content != "" {
+			if len(message.Parts) > 0 {
+				for index, part := range message.Parts {
+					switch part.Type {
+					case "text":
+						if part.Text == "" {
+							continue
+						}
+						turn.Blocks = append(turn.Blocks, CanonicalContentBlock{
+							Type: CanonicalBlockText,
+							Text: part.Text,
+						})
+					case "image_url":
+						if part.ImageURL == nil {
+							return CanonicalRequest{}, fmt.Errorf("turn[%d].part[%d]: image_url is nil", len(turns), index)
+						}
+						src, err := parseOpenAIImageURL(part.ImageURL.URL)
+						if err != nil {
+							return CanonicalRequest{}, fmt.Errorf("turn[%d].part[%d]: %w", len(turns), index, err)
+						}
+						rawSrc, err := json.Marshal(src)
+						if err != nil {
+							return CanonicalRequest{}, fmt.Errorf("turn[%d].part[%d]: marshal source: %w", len(turns), index, err)
+						}
+						turn.Blocks = append(turn.Blocks, CanonicalContentBlock{
+							Type:     CanonicalBlockImage,
+							Data:     rawSrc,
+							Metadata: imageBlockMetadata(src, index),
+						})
+					}
+				}
+			} else if message.Content != "" {
 				turn.Blocks = append(turn.Blocks, CanonicalContentBlock{
 					Type: CanonicalBlockText,
 					Text: message.Content,
@@ -712,4 +742,16 @@ func documentToText(source *ImageSource) string {
 		keep = keep[:256<<10]
 	}
 	return fmt.Sprintf("data:%s;base64,%s", source.MediaType, keep)
+}
+
+// imageBlockMetadata produces the metadata map attached to every image
+// CanonicalContentBlock. It captures enough context for log views without
+// embedding the raw payload.
+func imageBlockMetadata(src ImageSource, index int) map[string]any {
+	return map[string]any{
+		"media_type":  src.MediaType,
+		"source_type": src.Type,
+		"byte_size":   approxByteSize(src),
+		"index":       index,
+	}
 }
