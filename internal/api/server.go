@@ -723,7 +723,7 @@ func validateChatRequest(request *proxy.OpenAIChatRequest) error {
 		message := &request.Messages[i]
 		switch message.Role {
 		case "system", "user":
-			if message.Content == "" {
+			if message.Content == "" && len(message.Parts) == 0 {
 				return errors.New("message content must not be empty")
 			}
 		case "assistant":
