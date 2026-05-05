@@ -260,3 +260,40 @@ func TestCanonicalizeOpenAIRequest_TextOnlyParts(t *testing.T) {
 		t.Fatalf("block[1]: %+v", blocks[1])
 	}
 }
+
+func TestCanonicalizeAnthropicRequest_ImageBlockHasMetadata(t *testing.T) {
+	req := AnthropicMessagesRequest{
+		Model:     "claude-3-7-sonnet-20250219",
+		MaxTokens: 1024,
+		Messages: []AnthropicMessage{{
+			Role: "user",
+			Content: []ContentBlock{
+				{Type: "text", Text: "see"},
+				{Type: "image", Source: &ImageSource{Type: "base64", MediaType: "image/jpeg", Data: "QUFB"}},
+			},
+		}},
+	}
+	canonical, err := CanonicalizeAnthropicRequest(req, "")
+	if err != nil {
+		t.Fatalf("Canonicalize: %v", err)
+	}
+	if len(canonical.Turns) != 1 {
+		t.Fatalf("turns = %d", len(canonical.Turns))
+	}
+	blocks := canonical.Turns[0].Blocks
+	if len(blocks) != 2 {
+		t.Fatalf("blocks = %d, want 2", len(blocks))
+	}
+	if blocks[1].Type != CanonicalBlockImage {
+		t.Fatalf("blocks[1].Type = %v", blocks[1].Type)
+	}
+	if blocks[1].Metadata == nil {
+		t.Fatalf("blocks[1].Metadata is nil; want populated")
+	}
+	if blocks[1].Metadata["media_type"] != "image/jpeg" {
+		t.Fatalf("media_type = %v", blocks[1].Metadata["media_type"])
+	}
+	if blocks[1].Metadata["source_type"] != "base64" {
+		t.Fatalf("source_type = %v", blocks[1].Metadata["source_type"])
+	}
+}
