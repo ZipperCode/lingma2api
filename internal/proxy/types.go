@@ -47,12 +47,29 @@ type ToolFunction struct {
 	Parameters  any    `json:"parameters,omitempty"`
 }
 
+// OpenAIContentPart represents a single part in a multimodal user/system
+// message. When the request body provides `content` as a JSON array, each
+// element is unmarshalled into one of these.
+type OpenAIContentPart struct {
+	Type     string                 `json:"type"`
+	Text     string                 `json:"text,omitempty"`
+	ImageURL *OpenAIContentImageURL `json:"image_url,omitempty"`
+}
+
+// OpenAIContentImageURL describes the image source. URL may be an http(s)
+// URL or a `data:<media>;base64,<payload>` data URI.
+type OpenAIContentImageURL struct {
+	URL    string `json:"url"`
+	Detail string `json:"detail,omitempty"`
+}
+
 type Message struct {
-	Role       string     `json:"role"`
-	Content    string     `json:"content,omitempty"`
-	Name       string     `json:"name,omitempty"`
-	ToolCallID string     `json:"tool_call_id,omitempty"`
-	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
+	Role       string              `json:"role"`
+	Content    string              `json:"content,omitempty"`
+	Parts      []OpenAIContentPart `json:"-"`
+	Name       string              `json:"name,omitempty"`
+	ToolCallID string              `json:"tool_call_id,omitempty"`
+	ToolCalls  []ToolCall          `json:"tool_calls,omitempty"`
 }
 
 type CanonicalProtocol string

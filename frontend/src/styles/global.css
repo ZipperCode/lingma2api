@@ -796,3 +796,15 @@ div:has(> h2:only-of-type) {
     grid-template-columns: 1fr !important;
   }
 }
+
+.vision-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  margin: 8px 0;
+  border-radius: 6px;
+  background: rgba(89, 169, 255, 0.08);
+  color: var(--text-secondary, #888);
+  font-size: 12px;
+}

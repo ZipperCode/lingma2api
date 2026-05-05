@@ -78,6 +78,9 @@ func (builder *BodyBuilder) BuildCanonical(request CanonicalRequest, modelKey st
 		"request_set_id":   "",
 		"chat_record_id":   requestID,
 		"stream":           request.Stream,
+		// TODO(vision-reverse): Lingma 远端 image_urls 字段真实格式未反向。
+		// 骨架阶段保持 nil；反向任务参见
+		// docs/superpowers/specs/2026-05-XX-vision-image-urls-reverse.md
 		"image_urls":       nil,
 		"is_reply":         false,
 		"is_retry":         false,
