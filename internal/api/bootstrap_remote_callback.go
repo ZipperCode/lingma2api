@@ -67,11 +67,13 @@ func (m *BootstrapManager) StartRemoteCallback() (*BootstrapSession, error) {
 		cancel:    cancel,
 	}
 	m.sessions[id] = sess
+	snapshot := *sess
+	snapshot.cancel = nil
 	m.mu.Unlock()
 
 	go m.runRemoteCallbackFlow(ctx, id, machineID)
 
-	return sess, nil
+	return &snapshot, nil
 }
 
 // runRemoteCallbackFlow executes the full callback → derive → save chain.

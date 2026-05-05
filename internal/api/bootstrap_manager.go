@@ -277,7 +277,12 @@ func (m *BootstrapManager) GetStatus(id string) *BootstrapSession {
 		delete(m.sessions, id)
 	}
 
-	return sess
+	// Return a copy so callers reading fields after the lock is released
+	// don't race with concurrent updaters. The cancel field is non-serializable
+	// and intentionally omitted from copies.
+	snapshot := *sess
+	snapshot.cancel = nil
+	return &snapshot
 }
 
 func (m *BootstrapManager) updateSession(id, status, errMsg string) {
