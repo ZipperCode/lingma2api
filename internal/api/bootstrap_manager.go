@@ -16,12 +16,14 @@ import (
 )
 
 type BootstrapSession struct {
-	ID        string    `json:"id"`
-	Status    string    `json:"status"`
-	Method    string    `json:"method"`
-	AuthURL   string    `json:"auth_url,omitempty"`
-	Error     string    `json:"error,omitempty"`
-	StartedAt time.Time `json:"started_at"`
+	ID        string             `json:"id"`
+	Status    string             `json:"status"`
+	Method    string             `json:"method"`
+	AuthURL   string             `json:"auth_url,omitempty"`
+	Error     string             `json:"error,omitempty"`
+	StartedAt time.Time          `json:"started_at"`
+	ExpiresAt time.Time          `json:"expires_at,omitempty"`
+	cancel    context.CancelFunc `json:"-"`
 }
 
 type BootstrapManager struct {
@@ -275,7 +277,12 @@ func (m *BootstrapManager) GetStatus(id string) *BootstrapSession {
 		delete(m.sessions, id)
 	}
 
-	return sess
+	// Return a copy so callers reading fields after the lock is released
+	// don't race with concurrent updaters. The cancel field is non-serializable
+	// and intentionally omitted from copies.
+	snapshot := *sess
+	snapshot.cancel = nil
+	return &snapshot
 }
 
 func (m *BootstrapManager) updateSession(id, status, errMsg string) {
@@ -285,6 +292,74 @@ func (m *BootstrapManager) updateSession(id, status, errMsg string) {
 		s.Status = status
 		s.Error = errMsg
 	}
+}
+
+// findActiveLocked returns the first session in a non-terminal state, or nil.
+// Caller must hold m.mu.
+func (m *BootstrapManager) findActiveLocked() *BootstrapSession {
+	for _, s := range m.sessions {
+		switch s.Status {
+		case "running", "awaiting_callback", "deriving":
+			return s
+		}
+	}
+	return nil
+}
+
+// Start dispatches to the requested bootstrap method. Empty/auto runs the
+// fallback chain: oauth (when client_id configured) → remote_callback → ws.
+// Each candidate that fails its precondition synchronously is skipped without
+// entering the running state.
+func (m *BootstrapManager) Start(method string) (*BootstrapSession, error) {
+	switch method {
+	case "", "auto":
+		if m.clientID != "" {
+			if s, err := m.StartOAuth(); err == nil {
+				return s, nil
+			}
+		}
+		if s, err := m.StartRemoteCallback(); err == nil {
+			return s, nil
+		}
+		return m.StartWS()
+	case "oauth":
+		return m.StartOAuth()
+	case "ws":
+		return m.StartWS()
+	case "remote_callback":
+		return m.StartRemoteCallback()
+	default:
+		return nil, fmt.Errorf("invalid method: %s", method)
+	}
+}
+
+// Cancel cancels an in-flight session by id. Only running, awaiting_callback,
+// and deriving states are cancellable. The session's context is cancelled and
+// its status is synchronously set to "cancelled".
+func (m *BootstrapManager) Cancel(id string) error {
+	m.mu.Lock()
+	sess, ok := m.sessions[id]
+	if !ok {
+		m.mu.Unlock()
+		return fmt.Errorf("session not found")
+	}
+	switch sess.Status {
+	case "running", "awaiting_callback", "deriving":
+		// fall through
+	default:
+		m.mu.Unlock()
+		return fmt.Errorf("session already %s", sess.Status)
+	}
+	cancel := sess.cancel
+	sess.cancel = nil
+	sess.Status = "cancelled"
+	sess.Error = ""
+	m.mu.Unlock()
+
+	if cancel != nil {
+		cancel()
+	}
+	return nil
 }
 
 func newSessionID() string {

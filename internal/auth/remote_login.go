@@ -12,12 +12,18 @@ import (
 	"lingma2api/internal/proxy"
 )
 
+var (
+	// userLoginURL is the remote endpoint that DeriveCredentialsRemotely POSTs to.
+	// It is a var (not const) so tests can override it via SetUserLoginURLForTest.
+	// Production value is the lingma-api.tongyi.aliyun.com endpoint.
+	userLoginURL = "https://lingma-api.tongyi.aliyun.com/algo/api/v3/user/login?Encode=1"
+)
+
 const (
 	// Note: The remote login API is not directly callable from outside Lingma.
 	// The body encoding (Encode=2 per login_encode config, AES encrypt with unknown key)
 	// has not been fully analyzed. All direct attempts return 500.
 	// Use the WebSocket RPC (RefreshTokensViaWebSocket) or OAuth flow instead.
-	userLoginURL    = "https://lingma-api.tongyi.aliyun.com/algo/api/v3/user/login?Encode=1"
 	userLoginAESKey = "QbgzpWzN7tfe43gf"
 
 	// OldSignatureKey is the session_key for old Signature flow (addBigModelSignatureHeaders).

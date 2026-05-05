@@ -90,7 +90,29 @@ func BuildLingmaLoginEntryURL(cfg LingmaLoginEntryConfig) (string, string, strin
 	return baseURL + "?" + values.Encode(), state, verifier, nil
 }
 
+// WaitForCallbackOptions controls advanced behavior of WaitForCallbackWithOptions.
+type WaitForCallbackOptions struct {
+	// AllowedOrigins is the whitelist for /submit-userinfo Origin header.
+	// Empty string in the slice = no Origin header (same-origin / file:// / direct redirect).
+	// nil = allow all (legacy behavior).
+	AllowedOrigins []string
+
+	// AutoInjectHTML controls whether GET <callbackPath> returns the auto-injection HTML
+	// (CallbackAutoInjectHTML) instead of the legacy short HTML.
+	AutoInjectHTML bool
+}
+
+// WaitForCallback is the legacy entry point. It listens on listenAddr,
+// serves <callbackPath> + /submit-userinfo + /profile, and returns the
+// first CallbackCapture (GET query/path or POST body).
 func WaitForCallback(ctx context.Context, listenAddr, callbackPath string) (CallbackCapture, error) {
+	return WaitForCallbackWithOptions(ctx, listenAddr, callbackPath, WaitForCallbackOptions{})
+}
+
+// WaitForCallbackWithOptions is the option-aware version of WaitForCallback.
+// AutoInjectHTML controls the GET response shape; AllowedOrigins gates the
+// /submit-userinfo POST.
+func WaitForCallbackWithOptions(ctx context.Context, listenAddr, callbackPath string, opts WaitForCallbackOptions) (CallbackCapture, error) {
 	if listenAddr == "" {
 		return CallbackCapture{}, errors.New("missing listen address")
 	}
@@ -108,13 +130,15 @@ func WaitForCallback(ctx context.Context, listenAddr, callbackPath string) (Call
 	errCh := make(chan error, 1)
 
 	mux := http.NewServeMux()
-	handler := func(writer http.ResponseWriter, request *http.Request) {
+	getHandler := func(writer http.ResponseWriter, request *http.Request) {
 		captured := CaptureFromRequest(request)
 		captured.Referer = request.Header.Get("Referer")
-		resultCh <- captured
 		writer.Header().Set("Content-Type", "text/html; charset=utf-8")
 		writer.Header().Set("Access-Control-Allow-Origin", "*")
-		_, _ = writer.Write([]byte(`<!DOCTYPE html>
+		if opts.AutoInjectHTML {
+			_, _ = writer.Write([]byte(CallbackAutoInjectHTML))
+		} else {
+			_, _ = writer.Write([]byte(`<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><title>Lingma Auth</title></head>
 <body>
 <h1>Authorization received</h1>
@@ -124,18 +148,34 @@ func WaitForCallback(ctx context.Context, listenAddr, callbackPath string) (Call
 copy(window.user_info)
 </pre>
 </body></html>`))
+		}
+		// In auto-inject mode the GET itself does not deliver tokens; the script
+		// will POST to /submit-userinfo. Only deliver a capture when the GET
+		// carries query parameters (legacy mode).
+		if !opts.AutoInjectHTML || len(captured.Query) > 0 {
+			select {
+			case resultCh <- captured:
+			default:
+			}
+		}
 	}
-	mux.HandleFunc(callbackPath, handler)
+	mux.HandleFunc(callbackPath, getHandler)
 	if callbackPath != "/profile" {
-		mux.HandleFunc("/profile", handler)
+		mux.HandleFunc("/profile", getHandler)
 	}
 
-	// POST /submit-userinfo: bookmarklet submits window.user_info + window.login_url JSON
+	// POST /submit-userinfo: body JSON {userInfo, loginUrl}
 	mux.HandleFunc("/submit-userinfo", func(writer http.ResponseWriter, request *http.Request) {
 		if request.Method != http.MethodPost {
 			writer.Header().Set("Content-Type", "text/html; charset=utf-8")
 			writer.WriteHeader(http.StatusMethodNotAllowed)
 			_, _ = writer.Write([]byte(`<h1>Method Not Allowed</h1><p>Use POST with JSON body: {"userInfo":..., "loginUrl":...}</p>`))
+			return
+		}
+		if !originAllowed(request.Header.Get("Origin"), opts.AllowedOrigins) {
+			writer.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			writer.WriteHeader(http.StatusForbidden)
+			_, _ = writer.Write([]byte("forbidden origin"))
 			return
 		}
 		body, readErr := io.ReadAll(request.Body)
@@ -148,12 +188,15 @@ copy(window.user_info)
 		writer.Header().Set("Content-Type", "text/html; charset=utf-8")
 		writer.Header().Set("Access-Control-Allow-Origin", "*")
 		writer.WriteHeader(http.StatusOK)
-		_, _ = writer.Write([]byte(`<h1>Token data received</h1><p>You may close this window. Check the terminal for results.</p>`))
+		_, _ = writer.Write([]byte(`<h1>Token data received</h1><p>You may close this window.</p>`))
 
-		resultCh <- CallbackCapture{
+		select {
+		case resultCh <- CallbackCapture{
 			Path:       "/submit-userinfo",
 			ReceivedAt: time.Now(),
 			Body:       body,
+		}:
+		default:
 		}
 	})
 
@@ -177,6 +220,20 @@ copy(window.user_info)
 		_ = server.Shutdown(shutdownCtx)
 		return result, nil
 	}
+}
+
+// originAllowed returns true when origin is in the whitelist, or whitelist is nil.
+// An empty string in the whitelist matches a missing/empty Origin header.
+func originAllowed(origin string, allowed []string) bool {
+	if allowed == nil {
+		return true
+	}
+	for _, a := range allowed {
+		if a == origin {
+			return true
+		}
+	}
+	return false
 }
 
 func CallbackURLFromListenAddr(listenAddr string) (string, error) {

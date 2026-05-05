@@ -5,6 +5,7 @@ import type {
   AccountData,
   ModelMapping,
   BootstrapResponse,
+  BootstrapMethod,
   PolicyRule,
   PolicyTestInput,
   PolicyTestResult,
@@ -48,8 +49,17 @@ export const cleanupLogs = () => request<{ deleted: number }>('/admin/logs/clean
 // Account
 export const getAccount = () => request<AccountData>('/admin/account');
 export const refreshAccount = () => request<{ credential: unknown }>('/admin/account/refresh', { method: 'POST' });
-export const startBootstrap = () => request<BootstrapResponse>('/admin/account/bootstrap', { method: 'POST' });
-export const getBootstrapStatus = (id: string) => request<BootstrapResponse>(`/admin/account/bootstrap/status?id=${encodeURIComponent(id)}`);
+export const startBootstrap = (method?: BootstrapMethod) =>
+  request<BootstrapResponse>('/admin/account/bootstrap', {
+    method: 'POST',
+    body: method ? JSON.stringify({ method }) : undefined,
+  });
+export const getBootstrapStatus = (id: string) =>
+  request<BootstrapResponse>(`/admin/account/bootstrap/status?id=${encodeURIComponent(id)}`);
+export const cancelBootstrap = (id: string) =>
+  request<{ status: 'cancelled' }>(`/admin/account/bootstrap?id=${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
 
 // Mappings
 export const getMappings = () => request<ModelMapping[]>('/admin/mappings');
