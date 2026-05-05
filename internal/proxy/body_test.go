@@ -210,3 +210,32 @@ func TestBodyBuilderBuildCanonicalPreservesStructuredBlocksAndToolCalls(t *testi
 		t.Fatalf("expected tool_call_id c1, got %#v", toolMsg["tool_call_id"])
 	}
 }
+
+func TestBuildChatBody_ImageUrlsAlwaysNil(t *testing.T) {
+	builder := NewBodyBuilder("2.11.2",
+		func() time.Time { return time.Unix(1, 0) },
+		func() string { return "uuid-1" },
+		func() string { return "hex-1" },
+	)
+	canonical := CanonicalRequest{
+		Model:  "auto",
+		Stream: false,
+		Turns: []CanonicalTurn{{
+			Role: "user",
+			Blocks: []CanonicalContentBlock{
+				{Type: CanonicalBlockText, Text: "hi"},
+			},
+		}},
+	}
+	remote, err := builder.BuildCanonical(canonical, "qwen-plus")
+	if err != nil {
+		t.Fatalf("BuildCanonical: %v", err)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(remote.BodyJSON), &parsed); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if parsed["image_urls"] != nil {
+		t.Fatalf("image_urls = %v, want nil (skeleton stage)", parsed["image_urls"])
+	}
+}
