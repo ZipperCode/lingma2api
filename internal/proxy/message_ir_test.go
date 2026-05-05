@@ -172,3 +172,91 @@ func TestCanonicalizeAnthropicRequestPreservesOrderedBlocks(t *testing.T) {
 func intPtr(v int) *int {
 	return &v
 }
+
+func TestCanonicalizeOpenAIRequest_ImagePartHTTP(t *testing.T) {
+	req := OpenAIChatRequest{
+		Model: "auto",
+		Messages: []Message{{
+			Role: "user",
+			Parts: []OpenAIContentPart{
+				{Type: "text", Text: "see this:"},
+				{Type: "image_url", ImageURL: &OpenAIContentImageURL{URL: "https://example.com/x.png"}},
+			},
+			Content: "see this:",
+		}},
+	}
+	canonical, err := CanonicalizeOpenAIRequest(req, "")
+	if err != nil {
+		t.Fatalf("Canonicalize: %v", err)
+	}
+	if len(canonical.Turns) != 1 {
+		t.Fatalf("turns = %d, want 1", len(canonical.Turns))
+	}
+	blocks := canonical.Turns[0].Blocks
+	if len(blocks) != 2 {
+		t.Fatalf("blocks = %d, want 2", len(blocks))
+	}
+	if blocks[0].Type != CanonicalBlockText || blocks[0].Text != "see this:" {
+		t.Fatalf("first block: %+v", blocks[0])
+	}
+	if blocks[1].Type != CanonicalBlockImage {
+		t.Fatalf("second block type = %v, want image", blocks[1].Type)
+	}
+	if blocks[1].Metadata["source_type"] != "url" {
+		t.Fatalf("source_type = %v, want url", blocks[1].Metadata["source_type"])
+	}
+}
+
+func TestCanonicalizeOpenAIRequest_ImagePartDataURI(t *testing.T) {
+	req := OpenAIChatRequest{
+		Model: "auto",
+		Messages: []Message{{
+			Role: "user",
+			Parts: []OpenAIContentPart{
+				{Type: "image_url", ImageURL: &OpenAIContentImageURL{URL: "data:image/png;base64,QUFB"}},
+			},
+		}},
+	}
+	canonical, err := CanonicalizeOpenAIRequest(req, "")
+	if err != nil {
+		t.Fatalf("Canonicalize: %v", err)
+	}
+	blocks := canonical.Turns[0].Blocks
+	if len(blocks) != 1 || blocks[0].Type != CanonicalBlockImage {
+		t.Fatalf("blocks: %+v", blocks)
+	}
+	if blocks[0].Metadata["media_type"] != "image/png" {
+		t.Fatalf("media_type = %v", blocks[0].Metadata["media_type"])
+	}
+	if blocks[0].Metadata["source_type"] != "base64" {
+		t.Fatalf("source_type = %v", blocks[0].Metadata["source_type"])
+	}
+}
+
+func TestCanonicalizeOpenAIRequest_TextOnlyParts(t *testing.T) {
+	req := OpenAIChatRequest{
+		Model: "auto",
+		Messages: []Message{{
+			Role: "user",
+			Parts: []OpenAIContentPart{
+				{Type: "text", Text: "hi"},
+				{Type: "text", Text: "again"},
+			},
+			Content: "hi\nagain",
+		}},
+	}
+	canonical, err := CanonicalizeOpenAIRequest(req, "")
+	if err != nil {
+		t.Fatalf("Canonicalize: %v", err)
+	}
+	blocks := canonical.Turns[0].Blocks
+	if len(blocks) != 2 {
+		t.Fatalf("blocks = %d, want 2", len(blocks))
+	}
+	if blocks[0].Type != CanonicalBlockText || blocks[0].Text != "hi" {
+		t.Fatalf("block[0]: %+v", blocks[0])
+	}
+	if blocks[1].Type != CanonicalBlockText || blocks[1].Text != "again" {
+		t.Fatalf("block[1]: %+v", blocks[1])
+	}
+}
