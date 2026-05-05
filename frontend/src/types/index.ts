@@ -165,13 +165,24 @@ export interface AccountData {
   };
 }
 
+export type BootstrapMethod = 'auto' | 'oauth' | 'ws' | 'remote_callback';
+
+export type BootstrapStatus =
+  | 'running'
+  | 'awaiting_callback'
+  | 'deriving'
+  | 'completed'
+  | 'error'
+  | 'cancelled';
+
 export interface BootstrapResponse {
   id: string;
-  status: string;
-  method: string;
+  status: BootstrapStatus | string;
+  method: BootstrapMethod | '';
   auth_url?: string;
   error?: string;
   started_at: string;
+  expires_at?: string;
 }
 
 export type Theme = 'light' | 'dark';
