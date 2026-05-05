@@ -340,14 +340,24 @@ func canonicalizeAnthropicTurn(message AnthropicMessage) (CanonicalTurn, error) 
 				},
 			})
 		case "image":
+			src := ImageSource{}
+			if block.Source != nil {
+				src = *block.Source
+			}
 			turn.Blocks = append(turn.Blocks, CanonicalContentBlock{
-				Type: CanonicalBlockImage,
-				Data: mustMarshalRaw(block.Source),
+				Type:     CanonicalBlockImage,
+				Data:     mustMarshalRaw(block.Source),
+				Metadata: imageBlockMetadata(src, len(turn.Blocks)),
 			})
 		case "document":
+			src := ImageSource{}
+			if block.Source != nil {
+				src = *block.Source
+			}
 			turn.Blocks = append(turn.Blocks, CanonicalContentBlock{
-				Type: CanonicalBlockDocument,
-				Data: mustMarshalRaw(block.Source),
+				Type:     CanonicalBlockDocument,
+				Data:     mustMarshalRaw(block.Source),
+				Metadata: imageBlockMetadata(src, len(turn.Blocks)),
 			})
 		}
 	}
