@@ -246,6 +246,19 @@ func (server *Server) handleChatCompletions(writer http.ResponseWriter, request 
 	}
 	attachCanonicalRequestMetadata(&canonicalRequest, request.Header)
 
+	if err := proxy.ValidateVisionLimits(canonicalRequest); err != nil {
+		writeOpenAIInvalidImage(writer, err.Error())
+		return
+	}
+	if _, err := evaluateVisionGate(request.Context(), server.db, canonicalRequest); err != nil {
+		if errors.Is(err, ErrVisionNotImplemented) {
+			writeOpenAIVisionNotImplemented(writer)
+			return
+		}
+		writeMappedError(writer, err)
+		return
+	}
+
 	policyResult, err := server.evaluateCanonicalRequest(request.Context(), canonicalRequest)
 	if err != nil {
 		writeMappedError(writer, err)
@@ -783,4 +796,30 @@ func writeOpenAIError(writer http.ResponseWriter, statusCode int, message string
 			"type":    "invalid_request_error",
 		},
 	})
+}
+
+func writeOpenAIVisionNotImplemented(writer http.ResponseWriter) {
+	writer.Header().Set("Content-Type", "application/json")
+	writer.WriteHeader(http.StatusNotImplemented)
+	body := map[string]any{
+		"error": map[string]any{
+			"message": "vision input is not implemented yet; set vision_fallback_enabled=true in settings to fall back to text representation",
+			"type":    "not_implemented",
+			"code":    "vision_not_implemented",
+		},
+	}
+	_ = json.NewEncoder(writer).Encode(body)
+}
+
+func writeOpenAIInvalidImage(writer http.ResponseWriter, message string) {
+	writer.Header().Set("Content-Type", "application/json")
+	writer.WriteHeader(http.StatusBadRequest)
+	body := map[string]any{
+		"error": map[string]any{
+			"message": message,
+			"type":    "invalid_request_error",
+			"code":    "invalid_image",
+		},
+	}
+	_ = json.NewEncoder(writer).Encode(body)
 }
