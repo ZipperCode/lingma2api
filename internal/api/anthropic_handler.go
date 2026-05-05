@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -49,6 +50,23 @@ func (server *Server) handleAnthropicMessages(writer http.ResponseWriter, reques
 		return
 	}
 	attachCanonicalRequestMetadata(&canonicalRequest, request.Header)
+
+	if err := proxy.ValidateVisionLimits(canonicalRequest); err != nil {
+		writeAnthropicInvalidImage(writer, err.Error())
+		return
+	}
+	var visionStore SettingsStore
+	if server.db != nil {
+		visionStore = server.db
+	}
+	if _, err := evaluateVisionGate(request.Context(), visionStore, canonicalRequest); err != nil {
+		if errors.Is(err, ErrVisionNotImplemented) {
+			writeAnthropicVisionNotImplemented(writer)
+			return
+		}
+		writeAnthropicError(writer, http.StatusInternalServerError, err.Error())
+		return
+	}
 
 	policyResult, err := server.evaluateCanonicalRequest(request.Context(), canonicalRequest)
 	if err != nil {
@@ -532,6 +550,32 @@ func writeAnthropicError(writer http.ResponseWriter, statusCode int, message str
 		"type":  "error",
 		"error": map[string]string{"type": "invalid_request_error", "message": message},
 	})
+}
+
+func writeAnthropicVisionNotImplemented(writer http.ResponseWriter) {
+	writer.Header().Set("Content-Type", "application/json")
+	writer.WriteHeader(http.StatusNotImplemented)
+	body := map[string]any{
+		"type": "error",
+		"error": map[string]any{
+			"type":    "not_supported_yet",
+			"message": "vision input is not implemented yet; set vision_fallback_enabled=true in settings to fall back to text representation",
+		},
+	}
+	_ = json.NewEncoder(writer).Encode(body)
+}
+
+func writeAnthropicInvalidImage(writer http.ResponseWriter, message string) {
+	writer.Header().Set("Content-Type", "application/json")
+	writer.WriteHeader(http.StatusBadRequest)
+	body := map[string]any{
+		"type": "error",
+		"error": map[string]any{
+			"type":    "invalid_request_error",
+			"message": message,
+		},
+	}
+	_ = json.NewEncoder(writer).Encode(body)
 }
 
 func intPtr(i int) *int { return &i }

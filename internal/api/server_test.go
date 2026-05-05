@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"lingma2api/internal/db"
 	"lingma2api/internal/proxy"
 )
 
@@ -267,5 +268,96 @@ func TestChatCompletionsStreamWithContentOnlyNoToolCalls(t *testing.T) {
 	}
 	if strings.Contains(recorder.Body.String(), `"tool_calls"`) {
 		t.Fatalf("unexpected tool_calls in content-only response: %s", recorder.Body.String())
+	}
+}
+
+func newVisionTestStore(t *testing.T) *db.Store {
+	t.Helper()
+	store, err := db.Open(":memory:")
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	if err := store.Migrate(); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	return store
+}
+
+func newVisionHandler(t *testing.T, store *db.Store) http.Handler {
+	t.Helper()
+	return NewServer(Dependencies{
+		Credentials: fakeCredentials{},
+		Models:      fakeModels{},
+		Sessions:    fakeSessions{},
+		Transport: fakeTransport{
+			lines: []string{
+				`data:{"body":"{\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}","statusCodeValue":200}`,
+				`data:[DONE]`,
+			},
+		},
+		Builder: fakeBuilder{},
+		Now:     func() time.Time { return time.Unix(1, 0) },
+	}, store)
+}
+
+func TestChatCompletionsVisionDefaultReturns501(t *testing.T) {
+	store := newVisionTestStore(t)
+	handler := newVisionHandler(t, store)
+
+	body := `{"model":"auto","stream":false,"messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"data:image/png;base64,QUFB"}}]}]}`
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusNotImplemented {
+		t.Fatalf("status = %d, want 501; body=%s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "vision_not_implemented") {
+		t.Fatalf("body = %s, want vision_not_implemented", recorder.Body.String())
+	}
+}
+
+func TestChatCompletionsVisionFallbackEnabledBypassesGate(t *testing.T) {
+	store := newVisionTestStore(t)
+	if err := store.UpdateSettings(context.Background(), map[string]string{"vision_fallback_enabled": "true"}); err != nil {
+		t.Fatalf("UpdateSettings: %v", err)
+	}
+	handler := newVisionHandler(t, store)
+
+	body := `{"model":"auto","stream":false,"messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"data:image/png;base64,QUFB"}}]}]}`
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code == http.StatusNotImplemented {
+		t.Fatalf("status = 501; expected gate to be bypassed when fallback enabled. body=%s", recorder.Body.String())
+	}
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestChatCompletionsVisionExceedsLimitReturns400(t *testing.T) {
+	store := newVisionTestStore(t)
+	handler := newVisionHandler(t, store)
+
+	// Use unsupported media type instead of oversized payload because the
+	// server caps request body at 1 MB; we cannot construct a 5 MB image
+	// within that limit. Media-type rejection still exercises the same
+	// invalid_image error path.
+	body := `{"model":"auto","stream":false,"messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"data:image/bmp;base64,QUFB"}}]}]}`
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "invalid_image") {
+		t.Fatalf("body = %s, want invalid_image", recorder.Body.String())
 	}
 }

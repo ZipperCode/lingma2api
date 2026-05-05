@@ -6,12 +6,13 @@ import (
 )
 
 var defaultSettings = map[string]string{
-	"storage_mode":     "full",
-	"truncate_length":  "102400",
-	"retention_days":   "30",
-	"polling_interval": "0",
-	"theme":            "light",
-	"request_timeout":  "90",
+	"storage_mode":            "full",
+	"truncate_length":         "102400",
+	"retention_days":          "30",
+	"polling_interval":        "0",
+	"theme":                   "light",
+	"request_timeout":         "90",
+	"vision_fallback_enabled": "false",
 }
 
 func (s *Store) GetSettings(ctx context.Context) (map[string]string, error) {

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Copy, RotateCcw } from 'lucide-react';
+import { ArrowLeft, Copy, RotateCcw, ImageIcon } from 'lucide-react';
 import { getLog } from '../api/client';
 import { CodeViewer } from '../components/CodeViewer';
 import { ReplayModal } from '../components/ReplayModal';
@@ -19,6 +19,50 @@ const CANONICAL_TABS = [
   { key: 'post_policy_request', label: 'Post-Policy Canonical' },
   { key: 'session_snapshot', label: 'Canonical Session' },
 ] as const;
+
+type CanonicalTabKey = (typeof CANONICAL_TABS)[number]['key'];
+const CANONICAL_TAB_KEYS = CANONICAL_TABS.map(t => t.key) as readonly CanonicalTabKey[];
+
+interface VisionSummary {
+  count: number;
+  totalBytes: number;
+}
+
+function summarizeVisionBlocks(rawCanonical: string): VisionSummary | null {
+  if (!rawCanonical) return null;
+  try {
+    const parsed = JSON.parse(rawCanonical) as {
+      turns?: Array<{ blocks?: Array<{ type?: string; metadata?: Record<string, unknown> }> }>;
+    };
+    let count = 0;
+    let totalBytes = 0;
+    for (const turn of parsed.turns ?? []) {
+      for (const block of turn.blocks ?? []) {
+        if (block.type === 'image' || block.type === 'document') {
+          count += 1;
+          const size = Number(block.metadata?.byte_size ?? 0);
+          if (Number.isFinite(size)) totalBytes += size;
+        }
+      }
+    }
+    if (count === 0) return null;
+    return { count, totalBytes };
+  } catch {
+    return null;
+  }
+}
+
+function formatBytes(n: number): string {
+  if (!n) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let value = n;
+  let i = 0;
+  while (value >= 1024 && i < units.length - 1) {
+    value /= 1024;
+    i += 1;
+  }
+  return `${value.toFixed(value < 10 ? 1 : 0)} ${units[i]}`;
+}
 
 export function LogDetail() {
   const { id } = useParams<{ id: string }>();
@@ -107,6 +151,17 @@ export function LogDetail() {
           </button>
         ))}
       </div>
+
+      {(CANONICAL_TAB_KEYS as readonly string[]).includes(tab) && (() => {
+        const summary = summarizeVisionBlocks(tabValue);
+        if (!summary) return null;
+        return (
+          <div className="vision-summary">
+            <ImageIcon size={14} />
+            <span>含 {summary.count} 张图片 · 总 {formatBytes(summary.totalBytes)}</span>
+          </div>
+        );
+      })()}
 
       <CodeViewer code={tabValue} />
 
