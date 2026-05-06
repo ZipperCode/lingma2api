@@ -1,9 +1,49 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+lingma2api
+
+# Database
+*.db
+
+# Logs
+*.log
+server.log
+
+# Auth / credentials
 auth/credentials.json
+auth/credentials_remote.json
 auth/bootstrap-callback.json
 configs/client_id.txt
 configs/session_key.txt
-auth/credentials_remote.json
-lingma2api
-server.log
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/tsconfig.*.tsbuildinfo
+
+# Frontend build output
+frontend-dist/
+
+# IDE / tools
+.idea/
+.vscode/
+.serena/
 .ace-tool/
 .worktrees/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Go
+*.test
+*.out
+vendor/
+
+# Node
+node_modules/
+package-lock.json
