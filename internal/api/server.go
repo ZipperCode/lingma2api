@@ -110,13 +110,16 @@ func NewServer(deps Dependencies, store *db.Store) http.Handler {
 	mux.HandleFunc("/v1/messages", server.handleAnthropicMessages)
 	mux.HandleFunc("/v1/models", server.handleModels)
 	mux.HandleFunc("/admin/status", server.handleAdminStatus)
+	mux.HandleFunc("/admin/overview", server.handleAdminOverview)
 	mux.HandleFunc("/admin/sessions", server.handleAdminSessions)
 	mux.HandleFunc("/admin/sessions/", server.handleAdminSessionDelete)
 	mux.HandleFunc("/admin/dashboard", server.handleAdminDashboard)
+	mux.HandleFunc("/admin/models", server.handleAdminModels)
 	mux.HandleFunc("/admin/account", server.handleAdminAccount)
 	mux.HandleFunc("/admin/account/refresh", server.handleAdminAccountRefresh)
 	mux.HandleFunc("/admin/account/bootstrap", server.handleAdminAccountBootstrap)
 	mux.HandleFunc("/admin/account/bootstrap/status", server.handleAdminAccountBootstrapStatus)
+	mux.HandleFunc("/admin/account/import-cache", server.handleAdminAccountImportCache)
 	mux.HandleFunc("/admin/settings", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			server.handleAdminSettingsGet(w, r)

@@ -2,6 +2,8 @@ import type {
   LogListResult,
   RequestLog,
   DashboardData,
+  OverviewData,
+  AdminModelsResponse,
   AccountData,
   ModelMapping,
   BootstrapResponse,
@@ -32,6 +34,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 // Dashboard
 export const getDashboard = (range: string) =>
   request<DashboardData>(`/admin/dashboard?range=${range}`);
+export const getOverview = () => request<OverviewData>('/admin/overview');
 
 // Logs
 export const getLogs = (params: Record<string, string>) => {
@@ -45,6 +48,10 @@ export const replayLog = (id: string, body?: unknown) =>
     body: body ? JSON.stringify(body) : undefined,
   });
 export const cleanupLogs = () => request<{ deleted: number }>('/admin/logs/cleanup', { method: 'POST' });
+
+// Models
+export const getAdminModels = () => request<AdminModelsResponse>('/admin/models');
+export const refreshAdminModels = () => request<AdminModelsResponse>('/admin/models', { method: 'POST' });
 
 // Account
 export const getAccount = () => request<AccountData>('/admin/account');
@@ -60,6 +67,7 @@ export const cancelBootstrap = (id: string) =>
   request<{ status: 'cancelled' }>(`/admin/account/bootstrap?id=${encodeURIComponent(id)}`, {
     method: 'DELETE',
   });
+export const importCache = () => request<{ status: string; user_id: string; source: string }>('/admin/account/import-cache', { method: 'POST' });
 
 // Mappings
 export const getMappings = () => request<ModelMapping[]>('/admin/mappings');

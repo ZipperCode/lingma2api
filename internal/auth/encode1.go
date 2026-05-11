@@ -2,6 +2,7 @@ package auth
 
 import (
 	"encoding/base64"
+	"fmt"
 	"math"
 	"strings"
 )
@@ -56,40 +57,52 @@ func lingmaEncode(data []byte) string {
 	return b2 + strings.Repeat("$", pad) + b1 + b0
 }
 
+// lingmaDecode reverses the Encode=1 transformation: strip $ padding →
+// unscramble the three blocks → reverse alphabet substitution → base64 decode.
+//
+// Encode layout:  output = b2 + '$'*pad + b1 + b0
+//   b0 = original[:f]     where f = floor(E/3)
+//   b1 = original[f:2*c]  where c = ceil(E/3)
+//   b2 = original[2*c:]
+//
+// Decode: remove '$', then split clean into (b2, b1, b0) using the
+// reciprocal sizes, then reassemble as b0+b1+b2.
 func lingmaDecode(body string) []byte {
+	// 1. Remove $ padding
 	dollarStart := strings.IndexByte(body, '$')
-	var rev string
-
+	var clean string
 	if dollarStart < 0 {
-		rev = body
+		clean = body
 	} else {
-		pad := 0
+		p := 0
 		pos := dollarStart
 		for pos < len(body) && body[pos] == '$' {
-			pad++
+			p++
 			pos++
 		}
-		rev = body[:dollarStart] + body[dollarStart+pad:]
-		_ = pad
+		clean = body[:dollarStart] + body[dollarStart+p:]
 	}
 
-	e := len(rev)
-	bs := int(math.Ceil(float64(e) / 3.0))
-	lb := e - 2*bs
+	// 2. Reverse block order
+	e := len(clean)
+	c := int(math.Ceil(float64(e) / 3.0))
+	f := e / 3 // floor(E/3) for integers
+	lb := e - 2*c // b2 size (may be 0 or negative)
 	if lb < 0 {
 		lb = 0
 	}
-
-	b2 := rev[:lb]
-	b1End := lb + bs
-	if b1End > e {
-		b1End = e
+	b1Size := 2*c - f
+	if lb+b1Size > e {
+		b1Size = e - lb
 	}
-	b1 := rev[lb:b1End]
-	b0 := rev[b1End:]
 
-	reordered := b0 + b1 + b2
+	b2Block := clean[:lb]
+	b1Block := clean[lb : lb+b1Size]
+	b0Block := clean[lb+b1Size:]
 
+	reordered := b0Block + b1Block + b2Block
+
+	// 3. Reverse alphabet substitution + base64 decode
 	var converted strings.Builder
 	converted.Grow(len(reordered))
 	for i := 0; i < len(reordered); i++ {
@@ -108,6 +121,31 @@ func lingmaDecode(body string) []byte {
 		return nil
 	}
 	return decoded
+}
+
+// DecodeString is the public wrapper that returns (nil, error) on failure
+// instead of (nil, nil).
+func DecodeString(body string) ([]byte, error) {
+	raw := lingmaDecode(body)
+	if raw == nil {
+		return nil, fmt.Errorf("encode1: decode failed")
+	}
+	return raw, nil
+}
+
+// CustomDecryptParts decodes an Encode=1 string and splits it by newline
+// into exactly expectedParts parts (or returns an error).
+func CustomDecryptParts(encoded string, expectedParts int) ([]string, error) {
+	raw, err := DecodeString(encoded)
+	if err != nil {
+		return nil, fmt.Errorf("decode: %w", err)
+	}
+	text := string(raw)
+	parts := strings.SplitN(text, "\n", expectedParts)
+	if len(parts) < expectedParts {
+		return nil, fmt.Errorf("expected %d parts, got %d", expectedParts, len(parts))
+	}
+	return parts, nil
 }
 
 func LingmaEncode(data []byte) string {

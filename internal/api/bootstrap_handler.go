@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+
+	"lingma2api/internal/auth"
 )
 
 func (server *Server) handleAdminAccountBootstrap(w http.ResponseWriter, r *http.Request) {
@@ -93,4 +95,33 @@ func (server *Server) handleAdminAccountBootstrapStatus(w http.ResponseWriter, r
 	}
 
 	writeJSON(w, http.StatusOK, sess)
+}
+
+func (server *Server) handleAdminAccountImportCache(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeMethodNotAllowed(w, http.MethodPost)
+		return
+	}
+	if !server.isAdminAuthorized(r) {
+		writeOpenAIError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	bootstrap := server.deps.Bootstrap
+	if bootstrap == nil {
+		writeOpenAIError(w, http.StatusInternalServerError, "bootstrap not configured")
+		return
+	}
+
+	stored, err := auth.TryImportFromLingmaCache(bootstrap.AuthFile())
+	if err != nil {
+		writeOpenAIError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":   "imported",
+		"user_id":  stored.Auth.UserID,
+		"source":   stored.Source,
+	})
 }

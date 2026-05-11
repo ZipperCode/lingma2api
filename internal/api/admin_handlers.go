@@ -5,15 +5,94 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"lingma2api/internal/db"
 	"lingma2api/internal/policy"
+	"lingma2api/internal/proxy"
 )
+
+const overviewRecentRequestLimit = 8
+const overviewLatencySampleLimit = 120
+
+type adminOverviewResponse struct {
+	Healthy         bool                  `json:"healthy"`
+	GeneratedAt     time.Time             `json:"generated_at"`
+	Credential      proxy.CredentialStatus `json:"credential"`
+	Models          proxy.ModelStatus     `json:"models"`
+	SessionCount    int                   `json:"session_count"`
+	TokenStats      map[string]int        `json:"token_stats"`
+	Dashboard       db.DashboardData      `json:"dashboard"`
+	Latency         adminLatencyStats     `json:"latency"`
+	RecentRequests  []db.RequestLog       `json:"recent_requests"`
+	AvailableModels []proxy.OpenAIModel   `json:"available_models"`
+	Settings        map[string]string     `json:"settings"`
+}
+
+type adminLatencyStats struct {
+	AvgMs       int `json:"avg_ms"`
+	P50Ms       int `json:"p50_ms"`
+	P95Ms       int `json:"p95_ms"`
+	MaxMs       int `json:"max_ms"`
+	SampleCount int `json:"sample_count"`
+}
+
+type adminModelsResponse struct {
+	Items  []proxy.OpenAIModel `json:"items"`
+	Status proxy.ModelStatus   `json:"status"`
+}
+
+func (server *Server) handleAdminOverview(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeMethodNotAllowed(w, http.MethodGet)
+		return
+	}
+	if !server.isAdminAuthorized(r) {
+		writeOpenAIError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	overview, err := server.buildAdminOverview(r)
+	if err != nil {
+		writeOpenAIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, overview)
+}
+
+func (server *Server) handleAdminModels(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		writeMethodNotAllowed(w, "GET, POST")
+		return
+	}
+	if !server.isAdminAuthorized(r) {
+		writeOpenAIError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	if r.Method == http.MethodPost {
+		if err := server.deps.Models.Refresh(r.Context()); err != nil {
+			writeMappedError(w, err)
+			return
+		}
+	}
+
+	models, err := server.deps.Models.ListModels(r.Context())
+	if err != nil {
+		writeMappedError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, adminModelsResponse{
+		Items:  models,
+		Status: server.deps.Models.Status(),
+	})
+}
 
 func (server *Server) handleAdminDashboard(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -34,6 +113,116 @@ func (server *Server) handleAdminDashboard(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeJSON(w, http.StatusOK, data)
+}
+
+func (server *Server) buildAdminOverview(r *http.Request) (adminOverviewResponse, error) {
+	overview := adminOverviewResponse{
+		GeneratedAt: server.deps.Now(),
+		Credential:  server.deps.Credentials.Status(),
+		Models:      server.deps.Models.Status(),
+		TokenStats: map[string]int{
+			"today": 0,
+			"week":  0,
+			"total": 0,
+		},
+		Dashboard: db.DashboardData{
+			SuccessRateSeries: []db.TimeSeriesPoint{},
+			TokenSeries:       []db.TimeSeriesPoint{},
+			ModelDistribution: []db.ModelDistPoint{},
+		},
+		RecentRequests:  []db.RequestLog{},
+		AvailableModels: []proxy.OpenAIModel{},
+		Settings:        map[string]string{},
+	}
+
+	if sessions, err := server.deps.Sessions.List(r.Context()); err == nil {
+		overview.SessionCount = len(sessions)
+	}
+
+	if server.db != nil {
+		if settings, err := server.db.GetSettings(r.Context()); err == nil && settings != nil {
+			overview.Settings = settings
+		}
+		if today, week, total, err := server.db.GetTokenStats(r.Context()); err == nil {
+			overview.TokenStats["today"] = today
+			overview.TokenStats["week"] = week
+			overview.TokenStats["total"] = total
+		}
+		if dashboard, err := server.db.GetDashboardData(r.Context(), "24h"); err == nil {
+			overview.Dashboard = dashboard
+		}
+		recent, err := server.listAdminLogs(r.Context(), db.LogFilter{}, 1, overviewRecentRequestLimit)
+		if err == nil {
+			overview.RecentRequests = recent.Items
+		}
+		latencySample, err := server.exportAdminLogs(r.Context(), db.LogFilter{})
+		if err == nil {
+			if len(latencySample) > overviewLatencySampleLimit {
+				latencySample = latencySample[:overviewLatencySampleLimit]
+			}
+			overview.Latency = buildLatencyStats(latencySample)
+		}
+	}
+
+	models, modelErr := server.deps.Models.ListModels(r.Context())
+	if modelErr == nil {
+		overview.AvailableModels = models
+		overview.Models = server.deps.Models.Status()
+	}
+
+	overview.Healthy = overview.Credential.Loaded && overview.Credential.HasCredentials && (overview.Models.Cached || len(overview.AvailableModels) > 0)
+	return overview, nil
+}
+
+func buildLatencyStats(logs []db.RequestLog) adminLatencyStats {
+	values := make([]int, 0, len(logs))
+	for _, log := range logs {
+		if ms := logLatencyMs(log); ms > 0 {
+			values = append(values, ms)
+		}
+	}
+	if len(values) == 0 {
+		return adminLatencyStats{}
+	}
+	sort.Ints(values)
+	sum := 0
+	for _, value := range values {
+		sum += value
+	}
+	return adminLatencyStats{
+		AvgMs:       int(math.Round(float64(sum) / float64(len(values)))),
+		P50Ms:       percentileValue(values, 0.50),
+		P95Ms:       percentileValue(values, 0.95),
+		MaxMs:       values[len(values)-1],
+		SampleCount: len(values),
+	}
+}
+
+func percentileValue(sorted []int, p float64) int {
+	if len(sorted) == 0 {
+		return 0
+	}
+	index := int(math.Ceil(float64(len(sorted))*p)) - 1
+	if index < 0 {
+		index = 0
+	}
+	if index >= len(sorted) {
+		index = len(sorted) - 1
+	}
+	return sorted[index]
+}
+
+func logLatencyMs(log db.RequestLog) int {
+	switch {
+	case log.UpstreamMs > 0:
+		return log.UpstreamMs
+	case log.DownstreamMs > 0:
+		return log.DownstreamMs
+	case log.TTFTMs > 0:
+		return log.TTFTMs
+	default:
+		return 0
+	}
 }
 
 func (server *Server) handleAdminAccount(w http.ResponseWriter, r *http.Request) {

@@ -144,6 +144,60 @@ export interface DashboardData {
   model_distribution: ModelDistPoint[];
 }
 
+export interface AdminStatus {
+  loaded: boolean;
+  has_credentials: boolean;
+  source: string;
+  loaded_at: string;
+  token_expired?: boolean;
+}
+
+export interface ModelStatus {
+  fetched_at: string;
+  cached: boolean;
+  count: number;
+  last_error?: string;
+}
+
+export interface OverviewLatencyStats {
+  avg_ms: number;
+  p50_ms: number;
+  p95_ms: number;
+  max_ms: number;
+  sample_count: number;
+}
+
+export interface OverviewData {
+  healthy: boolean;
+  generated_at: string;
+  credential: AdminStatus;
+  models: ModelStatus;
+  session_count: number;
+  token_stats: {
+    today: number;
+    week: number;
+    total: number;
+  };
+  dashboard: DashboardData;
+  latency: OverviewLatencyStats;
+  recent_requests: RequestLog[];
+  available_models: Array<{
+    id: string;
+    object: string;
+    owned_by: string;
+  }>;
+  settings: Record<string, string>;
+}
+
+export interface AdminModelsResponse {
+  items: Array<{
+    id: string;
+    object: string;
+    owned_by: string;
+  }>;
+  status: ModelStatus;
+}
+
 export interface AccountData {
   credential: {
     cos_y_key: string;
@@ -179,6 +233,7 @@ export interface BootstrapResponse {
   id: string;
   status: BootstrapStatus | string;
   method: BootstrapMethod | '';
+  phase?: string;
   auth_url?: string;
   error?: string;
   started_at: string;

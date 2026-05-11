@@ -6,8 +6,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,6 +22,7 @@ type BootstrapSession struct {
 	ID        string             `json:"id"`
 	Status    string             `json:"status"`
 	Method    string             `json:"method"`
+	Phase     string             `json:"phase,omitempty"`
 	AuthURL   string             `json:"auth_url,omitempty"`
 	Error     string             `json:"error,omitempty"`
 	StartedAt time.Time          `json:"started_at"`
@@ -44,6 +48,153 @@ func NewBootstrapManager(authFile, listenAddr, lingmaVer string) *BootstrapManag
 		listenAddr: listenAddr,
 		lingmaVer:  lingmaVer,
 	}
+}
+
+func (m *BootstrapManager) StartOAuth() (*BootstrapSession, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Extract port from listenAddr for the Lingma login URL callback
+	_, port, err := net.SplitHostPort(m.listenAddr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid listen addr: %w", err)
+	}
+
+	// Build Lingma V2 login entry URL (no client_id required)
+	loginURL, state, _, err := auth.BuildLingmaLoginEntryURL(auth.LingmaLoginEntryConfig{
+		Port: port,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("build lingma login url: %w", err)
+	}
+
+	// Rewrite the port in the login URL to match our listener
+	loginURL, err = auth.RewriteLingmaLoginURLPort(loginURL, m.listenAddr)
+	if err != nil {
+		return nil, fmt.Errorf("rewrite login url port: %w", err)
+	}
+
+	// Wrap in three-layer nested URL for browser
+	browserURL, err := auth.WrapLingmaLoginURLForBrowser(loginURL)
+	if err != nil {
+		return nil, fmt.Errorf("wrap login url for browser: %w", err)
+	}
+
+	id := newSessionID()
+	sess := &BootstrapSession{
+		ID:        id,
+		Status:    "running",
+		Method:    "oauth",
+		AuthURL:   browserURL,
+		StartedAt: time.Now(),
+	}
+	m.sessions[id] = sess
+
+	go m.runOAuthFlow(id, state)
+
+	return sess, nil
+}
+
+func (m *BootstrapManager) runOAuthFlow(id, state string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	m.updateSessionWithPhase(id, "running", "waiting_callback", "")
+
+	capture, err := auth.WaitForCallback(ctx, m.listenAddr, "/auth/callback")
+	if err != nil {
+		m.updateSession(id, "error", fmt.Sprintf("wait for callback: %v", err))
+		return
+	}
+
+	m.updateSessionWithPhase(id, "running", "parsing_credentials", "")
+
+	// Parse V2/V1 callback data
+	result, err := auth.ParseCallbackV2(capture.Query)
+	if err != nil {
+		// Try page capture fallback: check if Body contains user_info
+		if capture.Body != nil {
+			m.updateSessionWithPhase(id, "running", "parsing_page_capture", "")
+			result, err = m.parsePageCapture(capture.Body)
+			if err != nil {
+				m.updateSession(id, "error", fmt.Sprintf("parse callback: %v", err))
+				return
+			}
+		} else {
+			m.updateSession(id, "error", fmt.Sprintf("parse callback: %v", err))
+			return
+		}
+	}
+
+	// Validate essential fields
+	if result.SecurityOAuthToken == "" {
+		m.updateSession(id, "error", "callback missing security_oauth_token")
+		return
+	}
+
+	m.updateSessionWithPhase(id, "running", "generating_cosy", "")
+
+	// Generate COSY credentials locally
+	cosyKey, encryptUserInfo, cosyErr := auth.GenerateCosyCredentials(auth.CosyCredentialInput{
+		Name:               result.Name,
+		UID:                result.UID,
+		AID:                result.AID,
+		SecurityOAuthToken: result.SecurityOAuthToken,
+		RefreshToken:       result.RefreshToken,
+	})
+
+	machineID := auth.NewMachineID()
+	expireMs := ""
+	if result.ExpireTime > 0 {
+		expireMs = fmt.Sprintf("%d", result.ExpireTime)
+	}
+
+	now := time.Now().Format(time.RFC3339)
+	stored := proxy.StoredCredentialFile{
+		SchemaVersion:     1,
+		Source:            "project_bootstrap",
+		LingmaVersionHint: m.lingmaVer,
+		ObtainedAt:        now,
+		UpdatedAt:         now,
+		TokenExpireTime:   expireMs,
+		Auth: proxy.StoredAuthFields{
+			UserID:    result.UID,
+			MachineID: machineID,
+		},
+		OAuth: proxy.StoredOAuthFields{
+			AccessToken:  result.SecurityOAuthToken,
+			RefreshToken: result.RefreshToken,
+		},
+	}
+
+	if cosyErr == nil {
+		stored.Auth.CosyKey = cosyKey
+		stored.Auth.EncryptUserInfo = encryptUserInfo
+	} else {
+		// Fallback to remote derivation for COSY credentials
+		m.updateSessionWithPhase(id, "running", "deriving_remote", "")
+		remoteStored, remoteErr := auth.DeriveCredentialsRemotely(auth.RemoteLoginConfig{
+			AccessToken:   result.SecurityOAuthToken,
+			RefreshToken:  result.RefreshToken,
+			UserID:        result.UID,
+			Username:      result.Name,
+			MachineID:     machineID,
+			TokenExpireMs: expireMs,
+		})
+		if remoteErr == nil {
+			stored.Auth.CosyKey = remoteStored.Auth.CosyKey
+			stored.Auth.EncryptUserInfo = remoteStored.Auth.EncryptUserInfo
+		}
+	}
+
+	m.updateSessionWithPhase(id, "running", "saving", "")
+
+	if err := auth.SaveCredentialFile(m.authFile, stored); err != nil {
+		m.updateSession(id, "error", fmt.Sprintf("save credentials: %v", err))
+		return
+	}
+
+	m.updateSession(id, "completed", "")
 }
 
 func (m *BootstrapManager) StartWS() (*BootstrapSession, error) {
@@ -125,22 +276,50 @@ func (m *BootstrapManager) runWSFlow(id string, stored proxy.StoredCredentialFil
 }
 
 func (m *BootstrapManager) deriveCredentials(accessToken, refreshToken, userID, machineID, expireMs string) (proxy.StoredCredentialFile, error) {
-	// Prefer Lingma binary when available — it has the proper encryption keys.
+	// 1. Prefer local COSY credential generation (most reliable, no network needed)
+	cosyKey, encryptUserInfo, err := auth.GenerateCosyCredentials(auth.CosyCredentialInput{
+		UID:                userID,
+		SecurityOAuthToken: accessToken,
+		RefreshToken:       refreshToken,
+	})
+	if err == nil && cosyKey != "" {
+		now := time.Now().Format(time.RFC3339)
+		return proxy.StoredCredentialFile{
+			SchemaVersion:     1,
+			Source:            "project_bootstrap",
+			LingmaVersionHint: m.lingmaVer,
+			ObtainedAt:        now,
+			UpdatedAt:         now,
+			TokenExpireTime:   expireMs,
+			Auth: proxy.StoredAuthFields{
+				CosyKey:         cosyKey,
+				EncryptUserInfo: encryptUserInfo,
+				UserID:          userID,
+				MachineID:       machineID,
+			},
+			OAuth: proxy.StoredOAuthFields{
+				AccessToken:  accessToken,
+				RefreshToken: refreshToken,
+			},
+		}, nil
+	}
+
+	// 2. Fall back to Lingma binary when available
 	lingmaBin, binErr := auth.DefaultLingmaBinary()
 	if binErr == nil {
-		stored, err := auth.DeriveCredentialsWithLingma(auth.LingmaBridgeConfig{
+		stored, lingmaErr := auth.DeriveCredentialsWithLingma(auth.LingmaBridgeConfig{
 			LingmaBinary:  lingmaBin,
 			AccessToken:   accessToken,
 			RefreshToken:  refreshToken,
 			UserID:        userID,
 			TokenExpireMs: expireMs,
 		})
-		if err == nil {
+		if lingmaErr == nil {
 			return stored, nil
 		}
 	}
 
-	// Fall back to remote derivation.
+	// 3. Fall back to remote derivation
 	return auth.DeriveCredentialsRemotely(auth.RemoteLoginConfig{
 		AccessToken:   accessToken,
 		RefreshToken:  refreshToken,
@@ -148,6 +327,10 @@ func (m *BootstrapManager) deriveCredentials(accessToken, refreshToken, userID, 
 		MachineID:     machineID,
 		TokenExpireMs: expireMs,
 	})
+}
+
+func (m *BootstrapManager) AuthFile() string {
+	return m.authFile
 }
 
 func (m *BootstrapManager) GetStatus(id string) *BootstrapSession {
@@ -181,6 +364,45 @@ func (m *BootstrapManager) updateSession(id, status, errMsg string) {
 	}
 }
 
+func (m *BootstrapManager) updateSessionWithPhase(id, status, phase, errMsg string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if s, ok := m.sessions[id]; ok {
+		s.Status = status
+		s.Phase = phase
+		s.Error = errMsg
+	}
+}
+
+// parsePageCapture attempts to extract user info from a POST body
+// sent by the bookmarklet / page capture mechanism.
+func (m *BootstrapManager) parsePageCapture(body []byte) (*auth.CallbackV2Result, error) {
+	var payload struct {
+		UserInfo string `json:"userInfo"`
+		LoginURL string `json:"loginUrl"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, fmt.Errorf("parse page capture JSON: %w", err)
+	}
+	if payload.UserInfo == "" {
+		return nil, fmt.Errorf("page capture missing userInfo")
+	}
+
+	// Try to parse as URL-encoded query string (browser location.search format)
+	// The userInfo might be raw text or URL with embedded params
+	raw := payload.UserInfo
+	if strings.Contains(raw, "?") {
+		parts := strings.SplitN(raw, "?", 2)
+		raw = parts[1]
+	}
+	query, err := url.ParseQuery(raw)
+	if err == nil && (query.Get("auth") != "" || query.Get("uid") != "") {
+		return auth.ParseCallbackV2(query)
+	}
+
+	return nil, fmt.Errorf("page capture userInfo format not recognized")
+}
+
 // findActiveLocked returns the first session in a non-terminal state, or nil.
 // Caller must hold m.mu.
 func (m *BootstrapManager) findActiveLocked() *BootstrapSession {
@@ -194,7 +416,7 @@ func (m *BootstrapManager) findActiveLocked() *BootstrapSession {
 }
 
 // Start dispatches to the requested bootstrap method. Empty/auto runs the
-// fallback chain: remote_callback → ws.
+// fallback chain: remote_callback -> ws.
 //
 // The standard OAuth grant path (oauth2/v1/auth + oauth.alibabacloud.com/v1/token)
 // is not used: Lingma's real flow runs against devops.aliyun.com/lingma/login

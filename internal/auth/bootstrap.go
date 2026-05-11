@@ -130,6 +130,11 @@ copy(window.user_info)
 		}
 	}
 	mux.HandleFunc(callbackPath, getHandler)
+	// Also register /auth/callback (Lingma V2 actual callback path)
+	mux.HandleFunc("/auth/callback", getHandler)
+	if callbackPath != "/callback" {
+		mux.HandleFunc("/callback", getHandler)
+	}
 	if callbackPath != "/profile" {
 		mux.HandleFunc("/profile", getHandler)
 	}

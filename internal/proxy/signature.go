@@ -78,22 +78,33 @@ func (engine *SignatureEngine) BuildHeaders(_ context.Context, credential Creden
 		return nil, err
 	}
 
+	sigPath := normalizePath(path)
+
 	headers := map[string]string{
-		"Authorization":     "Bearer " + bearer,
-		"Content-Type":      "application/json",
-		"Appcode":           "cosy",
-		"Cosy-Date":         date,
-		"Cosy-Key":          credential.CosyKey,
-		"Cosy-Machineid":    credential.MachineID,
-		"Cosy-User":         credential.UserID,
-		"Cosy-Clientip":     "198.18.0.1",
-		"Cosy-Clienttype":   "2",
-		"Cosy-Machineos":    "x86_64_windows",
-		"Cosy-Machinetoken": "",
-		"Cosy-Machinetype":  "",
-		"Cosy-Version":      engine.cosyVersion,
-		"Login-Version":     "v2",
-		"User-Agent":        "Go-http-client/1.1",
+		"Authorization":        "Bearer " + bearer,
+		"Content-Type":         "application/json",
+		"Appcode":              "cosy",
+		"Cosy-Date":            date,
+		"Cosy-Key":             credential.CosyKey,
+		"Cosy-MachineId":       credential.MachineID,
+		"Cosy-User":            credential.UserID,
+		"Cosy-Clientip":        "198.18.0.1",
+		"Cosy-Clienttype":      "2",
+		"Cosy-Machineos":       "x86_64_windows",
+		"Cosy-Machinetoken":    "",
+		"Cosy-Machinetype":     "",
+		"Cosy-Version":         engine.cosyVersion,
+		"Login-Version":        "v2",
+		"Cosy-SigPath":         sigPath,
+		"Cosy-Data-Policy":     "AGREE",
+		"Cosy-Organization-Tags":  "",
+		"Cosy-Organization-Id":    "",
+		"User-Agent":           "Go-http-client/1.1",
+	}
+	if body != "" {
+		bodyHash := md5.Sum([]byte(body))
+		headers["Cosy-BodyHash"] = fmt.Sprintf("%x", bodyHash)
+		headers["Cosy-BodyLength"] = strconv.Itoa(len(body))
 	}
 	if body == "" {
 		headers["Accept"] = "application/json"
@@ -105,6 +116,10 @@ func (engine *SignatureEngine) BuildHeaders(_ context.Context, credential Creden
 }
 
 func normalizePath(path string) string {
+	// Strip query string first
+	if idx := strings.Index(path, "?"); idx >= 0 {
+		path = path[:idx]
+	}
 	if strings.HasPrefix(path, "/algo") {
 		return strings.TrimPrefix(path, "/algo")
 	}

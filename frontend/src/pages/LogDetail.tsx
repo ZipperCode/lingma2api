@@ -75,7 +75,7 @@ export function LogDetail() {
   useEffect(() => {
     if (id) {
       setLoading(true);
-      getLog(id).then(d => { setLog(d); setLoading(false); }).catch(() => navigate('/logs'));
+      getLog(id).then(d => { setLog(d); setLoading(false); }).catch(() => navigate('/requests'));
     }
   }, [id, navigate]);
 
@@ -84,7 +84,7 @@ export function LogDetail() {
       <div>
         <div className="page-header">
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <button className="btn" onClick={() => navigate('/logs')}>
+            <button className="btn" onClick={() => navigate('/requests')}>
               <ArrowLeft size={16} /> 返回
             </button>
             <h2>请求详情</h2>
@@ -115,7 +115,7 @@ export function LogDetail() {
     <div>
       <div className="page-header">
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <button className="btn" onClick={() => navigate('/logs')}>
+          <button className="btn" onClick={() => navigate('/requests')}>
             <ArrowLeft size={16} /> 返回
           </button>
           <h2>请求详情</h2>

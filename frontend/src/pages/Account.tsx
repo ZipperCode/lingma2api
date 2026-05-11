@@ -1,14 +1,55 @@
 import { useState, useEffect, useRef } from 'react';
-import { RefreshCw, X, Cpu, Globe } from 'lucide-react';
-import { getAccount, refreshAccount, startBootstrap, getBootstrapStatus, cancelBootstrap } from '../api/client';
+import { RefreshCw, X, Cpu, Globe, Download } from 'lucide-react';
+import { getAccount, refreshAccount, startBootstrap, getBootstrapStatus, cancelBootstrap, importCache } from '../api/client';
 import { StatCard } from '../components/StatCard';
 import { Skeleton } from '../components/Skeleton';
 import type { AccountData, BootstrapMethod, BootstrapResponse } from '../types';
+
+const BOOTSTRAP_PHASES = [
+  { key: 'waiting_callback', label: '等待浏览器认证', icon: '1' },
+  { key: 'parsing_credentials', label: '解码凭据', icon: '2' },
+  { key: 'generating_cosy', label: '生成 COSY 密钥', icon: '3' },
+  { key: 'saving', label: '保存完成', icon: '4' },
+  { key: 'parsing_page_capture', label: '解析页面捕获', icon: '2b' },
+  { key: 'deriving_remote', label: '远程派生凭据', icon: '3b' },
+];
+
+function PhaseProgress({ phase, status }: { phase?: string; status: string }) {
+  if (status !== 'running' || !phase) return null;
+  const currentIdx = BOOTSTRAP_PHASES.findIndex(p => p.key === phase);
+  return (
+    <div style={{ display: 'flex', gap: 4, marginTop: 12, alignItems: 'center' }}>
+      {BOOTSTRAP_PHASES.filter(p => !p.key.endsWith('b')).map((p, i) => {
+        const active = i === currentIdx || (i < currentIdx);
+        const isCurrent = i === currentIdx;
+        return (
+          <div key={p.key} style={{
+            flex: 1,
+            padding: '8px 4px',
+            borderRadius: 6,
+            textAlign: 'center',
+            fontSize: 12,
+            fontWeight: isCurrent ? 700 : 400,
+            background: active ? 'var(--primary-dim, rgba(59,130,246,0.1))' : 'var(--bg-secondary)',
+            color: active ? 'var(--primary)' : 'var(--text-secondary)',
+            border: isCurrent ? '1px solid var(--primary)' : '1px solid transparent',
+            transition: 'all 0.2s',
+          }}>
+            <div style={{ fontSize: 16, marginBottom: 2 }}>{p.icon}</div>
+            {p.label}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 export function Account() {
   const [data, setData] = useState<AccountData | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [bootstrap, setBootstrap] = useState<BootstrapResponse | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState<{ status: string; user_id: string } | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval>>();
   const [loading, setLoading] = useState(true);
   const [remaining, setRemaining] = useState<string>('');
@@ -60,6 +101,19 @@ export function Account() {
     setRefreshing(true);
     try { await refreshAccount(); await load(); } catch {}
     setRefreshing(false);
+  };
+
+  const handleImportCache = async () => {
+    setImporting(true);
+    setImportResult(null);
+    try {
+      const result = await importCache();
+      setImportResult({ status: result.status, user_id: result.user_id });
+      await load();
+    } catch (e) {
+      setImportResult({ status: 'error', user_id: e instanceof Error ? e.message : String(e) });
+    }
+    setImporting(false);
   };
 
   const handleBootstrap = async (method: BootstrapMethod) => {
@@ -153,6 +207,10 @@ export function Account() {
             <Cpu size={16} />
             本地灵码
           </button>
+          <button className="btn" onClick={handleImportCache} disabled={importing}>
+            <Download size={16} />
+            {importing ? '导入中...' : '导入本地缓存'}
+          </button>
           <button className="btn" onClick={handleRefresh} disabled={refreshing}>
             <RefreshCw size={16} />
             {refreshing ? '刷新中...' : '刷新凭据'}
@@ -184,7 +242,7 @@ export function Account() {
             <div style={{ marginBottom: 8 }}>
               <p style={{ marginBottom: 8 }}>请在浏览器中打开以下链接完成阿里云登录：</p>
               <a href={bootstrap.auth_url} target="_blank" rel="noopener noreferrer"
-                style={{ wordBreak: 'break-all', color: 'var(--primary)', fontWeight: 600 }}>
+                style={{ wordBreak: 'break-all', color: 'var(--primary)', fontWeight: 600, fontSize: 13 }}>
                 {bootstrap.auth_url}
               </a>
               <p style={{ marginTop: 8, fontSize: 13, color: 'var(--text-secondary)' }}>
@@ -197,6 +255,7 @@ export function Account() {
               正在通过远程 user/login 派生 cosy_key 与 encrypt_user_info...
             </p>
           )}
+          <PhaseProgress phase={bootstrap.phase} status={bootstrap.status} />
           {bootstrap.status === 'completed' && (
             <p style={{ color: 'var(--success)' }}>凭据已成功更新。</p>
           )}
@@ -217,6 +276,16 @@ export function Account() {
               )}
             </p>
           )}
+        </div>
+      )}
+
+      {importResult && (
+        <div className="card" style={{ marginBottom: 16, borderLeft: importResult.status === 'imported' ? '3px solid var(--success)' : '3px solid var(--error)' }}>
+          <p style={{ color: importResult.status === 'imported' ? 'var(--success)' : 'var(--error)' }}>
+            {importResult.status === 'imported'
+              ? `成功导入凭据 (UserID: ${importResult.user_id})`
+              : importResult.user_id}
+          </p>
         </div>
       )}
 

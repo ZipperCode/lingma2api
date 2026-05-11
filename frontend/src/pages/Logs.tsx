@@ -54,7 +54,7 @@ export function Logs() {
     <div>
       <div className="page-header">
         <h2>请求日志</h2>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div className="page-actions page-actions-wrap">
           <select className="input" value={status} onChange={e => { setStatus(e.target.value); setPage(1); }}>
             <option value="">全部状态</option>
             <option value="success">成功</option>
@@ -81,7 +81,7 @@ export function Logs() {
         </div>
       ) : (
         <>
-          <div className="table-scroll card" style={{ padding: 0 }}>
+          <div className="card card-table table-scroll">
             <table>
               <thead>
                 <tr>
