@@ -36,6 +36,10 @@ type BootstrapManager struct {
 	authFile   string
 	listenAddr string
 	lingmaVer  string
+
+	// OnCredentialSaved is called after credentials are saved to the auth file.
+	// Used to trigger CredentialManager.Refresh() so the in-memory state is updated.
+	OnCredentialSaved func()
 }
 
 func NewBootstrapManager(authFile, listenAddr, lingmaVer string) *BootstrapManager {
@@ -194,7 +198,28 @@ func (m *BootstrapManager) runOAuthFlow(id, state string) {
 		return
 	}
 
+	m.logAndReload(id, result.UID, result.AID, result.Name, stored.Auth.CosyKey, machineID, expireMs)
+}
+
+// logAndReload logs credential details and triggers the OnCredentialSaved callback.
+func (m *BootstrapManager) logAndReload(id, uid, aid, name, cosyKey, machineID, expireTime string) {
+	fmt.Printf("[bootstrap] OAuth login successful (session=%s)\n", id)
+	fmt.Printf("[bootstrap]   uid:        %s\n", uid)
+	fmt.Printf("[bootstrap]   aid:        %s\n", aid)
+	fmt.Printf("[bootstrap]   name:       %s\n", name)
+	fmt.Printf("[bootstrap]   machine_id: %s\n", machineID)
+	if len(cosyKey) > 20 {
+		fmt.Printf("[bootstrap]   cosy_key:   %s...\n", cosyKey[:20])
+	} else if cosyKey != "" {
+		fmt.Printf("[bootstrap]   cosy_key:   %s\n", cosyKey)
+	}
+	fmt.Printf("[bootstrap]   expire:     %s\n", expireTime)
+
 	m.updateSession(id, "completed", "")
+
+	if m.OnCredentialSaved != nil {
+		m.OnCredentialSaved()
+	}
 }
 
 func (m *BootstrapManager) StartWS() (*BootstrapSession, error) {
@@ -272,7 +297,7 @@ func (m *BootstrapManager) runWSFlow(id string, stored proxy.StoredCredentialFil
 		return
 	}
 
-	m.updateSession(id, "completed", "")
+	m.logAndReload(id, userID, "", "", newStored.Auth.CosyKey, machineID, expireMs)
 }
 
 func (m *BootstrapManager) deriveCredentials(accessToken, refreshToken, userID, machineID, expireMs string) (proxy.StoredCredentialFile, error) {

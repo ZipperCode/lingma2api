@@ -12,7 +12,7 @@ var defaultSettings = map[string]string{
 	"polling_interval":        "0",
 	"theme":                   "light",
 	"request_timeout":         "90",
-	"vision_fallback_enabled": "false",
+	"vision_fallback_enabled": "true",
 }
 
 func (s *Store) GetSettings(ctx context.Context) (map[string]string, error) {

@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -10,9 +11,10 @@ import (
 )
 
 const (
-	ChatPath      = "/algo/api/v2/service/pro/sse/agent_chat_generation"
-	ChatQuery     = "?FetchKeys=llm_model_result&AgentId=agent_common"
-	ModelListPath = "/algo/api/v2/model/list"
+	ChatPath         = "/algo/api/v2/service/pro/sse/agent_chat_generation"
+	ChatQuery        = "?FetchKeys=llm_model_result&AgentId=agent_common"
+	ModelListPath    = "/algo/api/v2/model/list"
+	ImageUploadPath  = "/algo/api/v2/image/upload"
 )
 
 var (
@@ -242,6 +244,17 @@ type CredentialStatus struct {
 	TokenExpired   bool      `json:"token_expired"`
 }
 
+// StoredMetaInfo carries file-level metadata from the credential file
+// without exposing sensitive values.
+type StoredMetaInfo struct {
+	SchemaVersion     int    `json:"schema_version"`
+	Source            string `json:"source"`
+	LingmaVersionHint string `json:"lingma_version_hint"`
+	ObtainedAt        string `json:"obtained_at"`
+	UpdatedAt         string `json:"updated_at"`
+	TokenExpireTime   string `json:"token_expire_time"`
+}
+
 type SessionState struct {
 	ID           string          `json:"id"`
 	Messages     []Message       `json:"messages,omitempty"`
@@ -294,6 +307,26 @@ type UpstreamHTTPError struct {
 
 func (err *UpstreamHTTPError) Error() string {
 	return fmt.Sprintf("upstream http status %d: %s", err.StatusCode, err.Body)
+}
+
+// ImageUploader is the interface for uploading images to Lingma CDN.
+type ImageUploader interface {
+	UploadImage(ctx context.Context, credential CredentialSnapshot, imageURI string) (cdnURL string, err error)
+}
+
+// ImageUploadResponse is the JSON response from /api/v2/image/upload.
+type ImageUploadResponse struct {
+	Data struct {
+		Success   bool   `json:"Success"`
+		ImageUrl  string `json:"ImageUrl"`
+		RequestId string `json:"RequestId"`
+	} `json:"Data"`
+}
+
+// ImageUploadRequest is the JSON body for image upload.
+type ImageUploadRequest struct {
+	ImageUri  string `json:"ImageUri"`
+	RequestId string `json:"RequestId"`
 }
 
 func DefaultAliases() map[string]string {

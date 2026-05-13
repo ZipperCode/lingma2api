@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"lingma2api/internal/auth"
+	"lingma2api/internal/proxy"
 )
 
 // remoteCallbackTimeout bounds how long a Remote Callback bootstrap session
@@ -119,6 +120,17 @@ func (m *BootstrapManager) runRemoteCallbackFlow(ctx context.Context, id, machin
 		return
 	}
 
+	// V2 callback path: auth+token query params with Encode=1 encoding.
+	// Triggered when state starts with "2-" (see GenerateState in pkce.go).
+	if len(capture.Body) == 0 && len(capture.Query) > 0 {
+		if authParam := capture.Query.Get("auth"); authParam != "" {
+			if tokenParam := capture.Query.Get("token"); tokenParam != "" {
+				m.handleV2Callback(id, authParam, tokenParam, machineID)
+				return
+			}
+		}
+	}
+
 	if len(capture.Body) == 0 {
 		m.updateSession(id, "error", fmt.Sprintf("callback did not contain user_info body (path=%s)", capture.Path))
 		return
@@ -174,7 +186,7 @@ func (m *BootstrapManager) runRemoteCallbackFlow(ctx context.Context, id, machin
 		return
 	}
 
-	m.updateSession(id, "completed", "")
+	m.logAndReload(id, stored.Auth.UserID, "", "", stored.Auth.CosyKey, stored.Auth.MachineID, "")
 }
 
 // statusIs returns true if the named session's current Status equals want.
@@ -183,6 +195,63 @@ func (m *BootstrapManager) statusIs(id, want string) bool {
 	defer m.mu.Unlock()
 	s, ok := m.sessions[id]
 	return ok && s.Status == want
+}
+
+// handleV2Callback processes a V2 OAuth callback where auth and token params
+// are Encode=1 encoded. It decodes them, generates COSY credentials locally,
+// and saves to the credential file.
+func (m *BootstrapManager) handleV2Callback(id, authParam, tokenParam, machineID string) {
+	result, err := auth.ParseCallbackV2FromStrings(authParam, tokenParam)
+	if err != nil {
+		m.updateSession(id, "error", fmt.Sprintf("parse v2 callback: %v", err))
+		return
+	}
+
+	m.updateSession(id, "deriving", "")
+
+	cosyKey, encryptUserInfo, err := auth.GenerateCosyCredentials(auth.CosyCredentialInput{
+		Name:               result.Name,
+		UID:                result.UID,
+		AID:                result.AID,
+		SecurityOAuthToken: result.SecurityOAuthToken,
+		RefreshToken:       result.RefreshToken,
+	})
+	if err != nil {
+		m.updateSession(id, "error", fmt.Sprintf("generate cosy credentials: %v", err))
+		return
+	}
+
+	now := time.Now().Format(time.RFC3339)
+	tokenExpireTime := ""
+	if result.ExpireTime > 0 {
+		tokenExpireTime = fmt.Sprintf("%d", result.ExpireTime)
+	}
+
+	stored := proxy.StoredCredentialFile{
+		SchemaVersion:     1,
+		Source:            "oauth_v2_callback",
+		LingmaVersionHint: "2.11.2",
+		ObtainedAt:        now,
+		UpdatedAt:         now,
+		TokenExpireTime:   tokenExpireTime,
+		Auth: proxy.StoredAuthFields{
+			CosyKey:         cosyKey,
+			EncryptUserInfo: encryptUserInfo,
+			UserID:          result.UID,
+			MachineID:       machineID,
+		},
+		OAuth: proxy.StoredOAuthFields{
+			AccessToken:  result.SecurityOAuthToken,
+			RefreshToken: result.RefreshToken,
+		},
+	}
+
+	if err := auth.SaveCredentialFile(m.authFile, stored); err != nil {
+		m.updateSession(id, "error", fmt.Sprintf("save credentials: %v", err))
+		return
+	}
+
+	m.logAndReload(id, result.UID, result.AID, result.Name, cosyKey, machineID, tokenExpireTime)
 }
 
 // portFromAddr extracts the port from a host:port listen address.

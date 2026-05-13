@@ -69,3 +69,40 @@ func ParseCallbackV2(query url.Values) (*CallbackV2Result, error) {
 
 	return nil, fmt.Errorf("callback contains neither V2 (auth+token) nor V1 (uid/aid/name) parameters")
 }
+
+// ParseCallbackV2FromStrings is a convenience wrapper that decodes auth and
+// token Encode=1 strings directly, without requiring url.Values.
+func ParseCallbackV2FromStrings(authParam, tokenParam string) (*CallbackV2Result, error) {
+	result := &CallbackV2Result{}
+
+	if authParam != "" {
+		parts, err := CustomDecryptParts(authParam, 3)
+		if err == nil && len(parts) >= 3 {
+			result.UID = parts[0]
+			result.AID = parts[1]
+			result.Name = parts[2]
+		} else {
+			return nil, fmt.Errorf("v2 auth decode failed: %w", err)
+		}
+	}
+
+	if tokenParam != "" {
+		parts, err := CustomDecryptParts(tokenParam, 3)
+		if err == nil && len(parts) >= 3 {
+			result.SecurityOAuthToken = parts[0]
+			result.RefreshToken = parts[1]
+			result.ExpireTimeRaw = parts[2]
+			if v, parseErr := strconv.ParseInt(parts[2], 10, 64); parseErr == nil {
+				result.ExpireTime = v
+			}
+		} else {
+			return nil, fmt.Errorf("v2 token decode failed: %w", err)
+		}
+	}
+
+	if result.UID == "" || result.SecurityOAuthToken == "" {
+		return nil, fmt.Errorf("v2 callback missing uid or token after decode")
+	}
+
+	return result, nil
+}

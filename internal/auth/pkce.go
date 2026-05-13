@@ -21,9 +21,9 @@ func NewMachineID() string {
 func GenerateState() string {
 	var buf [16]byte
 	if _, err := rand.Read(buf[:]); err != nil {
-		return "bootstrap-fallback"
+		return "2-fallback"
 	}
-	return "bootstrap-" + hex.EncodeToString(buf[:])
+	return "2-" + hex.EncodeToString(buf[:])
 }
 
 func GeneratePKCE() (string, string) {

@@ -5,6 +5,7 @@ import type {
   OverviewData,
   AdminModelsResponse,
   AccountData,
+  AccountTestResult,
   ModelMapping,
   BootstrapResponse,
   BootstrapMethod,
@@ -68,6 +69,7 @@ export const cancelBootstrap = (id: string) =>
     method: 'DELETE',
   });
 export const importCache = () => request<{ status: string; user_id: string; source: string }>('/admin/account/import-cache', { method: 'POST' });
+export const testAccountConnection = () => request<AccountTestResult>('/admin/account/test', { method: 'POST' });
 
 // Mappings
 export const getMappings = () => request<ModelMapping[]>('/admin/mappings');

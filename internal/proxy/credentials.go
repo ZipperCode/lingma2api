@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"strconv"
 	"sync"
@@ -94,6 +95,47 @@ func (manager *CredentialManager) Status() CredentialStatus {
 	}
 }
 
+// StoredMeta reads the credential file and returns file-level metadata
+// without exposing sensitive field values.
+func (manager *CredentialManager) StoredMeta() StoredMetaInfo {
+	if manager.cfg.AuthFile == "" {
+		return StoredMetaInfo{}
+	}
+	data, err := os.ReadFile(manager.cfg.AuthFile)
+	if err != nil {
+		return StoredMetaInfo{}
+	}
+	var stored StoredCredentialFile
+	if err := json.Unmarshal(data, &stored); err != nil {
+		return StoredMetaInfo{}
+	}
+	return StoredMetaInfo{
+		SchemaVersion:     stored.SchemaVersion,
+		Source:            stored.Source,
+		LingmaVersionHint: stored.LingmaVersionHint,
+		ObtainedAt:        stored.ObtainedAt,
+		UpdatedAt:         stored.UpdatedAt,
+		TokenExpireTime:   stored.TokenExpireTime,
+	}
+}
+
+// HasOAuth reads the credential file and reports whether access_token and
+// refresh_token are present. Returns (hasAccessToken, hasRefreshToken).
+func (manager *CredentialManager) HasOAuth() (bool, bool) {
+	if manager.cfg.AuthFile == "" {
+		return false, false
+	}
+	data, err := os.ReadFile(manager.cfg.AuthFile)
+	if err != nil {
+		return false, false
+	}
+	var stored StoredCredentialFile
+	if err := json.Unmarshal(data, &stored); err != nil {
+		return false, false
+	}
+	return stored.OAuth.AccessToken != "", stored.OAuth.RefreshToken != ""
+}
+
 func (manager *CredentialManager) loadSnapshot() (CredentialSnapshot, error) {
 	if manager.cfg.AuthFile == "" {
 		return CredentialSnapshot{}, fmt.Errorf("%w: missing auth_file", ErrCredentialsUnavailable)
@@ -114,6 +156,16 @@ func (manager *CredentialManager) loadSnapshot() (CredentialSnapshot, error) {
 
 	expireTime := parseExpireTime(stored.TokenExpireTime)
 
+	// Diagnostic logging for credential fields
+	log.Printf("[credential] loaded from %s: cosy_key=%d chars, encrypt_user_info=%d chars, user_id=%s, machine_id=%s, source=%s, token_expire=%d",
+		manager.cfg.AuthFile,
+		len(stored.Auth.CosyKey),
+		len(stored.Auth.EncryptUserInfo),
+		stored.Auth.UserID,
+		stored.Auth.MachineID,
+		stored.Source,
+		expireTime)
+
 	snapshot := CredentialSnapshot{
 		CosyKey:         stored.Auth.CosyKey,
 		EncryptUserInfo: stored.Auth.EncryptUserInfo,
@@ -123,7 +175,12 @@ func (manager *CredentialManager) loadSnapshot() (CredentialSnapshot, error) {
 		LoadedAt:        manager.now(),
 		TokenExpireTime: expireTime,
 	}
-	return snapshot, validateSnapshot(snapshot)
+	if err := validateSnapshot(snapshot); err != nil {
+		log.Printf("[credential] validation failed, credentials unavailable")
+		return CredentialSnapshot{}, err
+	}
+	log.Printf("[credential] validation passed, credentials ready")
+	return snapshot, nil
 }
 
 func parseExpireTime(s string) int64 {
@@ -138,17 +195,22 @@ func parseExpireTime(s string) int64 {
 }
 
 func validateSnapshot(snapshot CredentialSnapshot) error {
+	var missing []string
 	if snapshot.CosyKey == "" {
-		return fmt.Errorf("%w: missing cosy key", ErrCredentialsUnavailable)
+		missing = append(missing, "cosy_key")
 	}
 	if snapshot.EncryptUserInfo == "" {
-		return fmt.Errorf("%w: missing encrypt_user_info", ErrCredentialsUnavailable)
+		missing = append(missing, "encrypt_user_info")
 	}
 	if snapshot.UserID == "" {
-		return fmt.Errorf("%w: missing user id", ErrCredentialsUnavailable)
+		missing = append(missing, "user_id")
 	}
 	if snapshot.MachineID == "" {
-		return fmt.Errorf("%w: missing machine id", ErrCredentialsUnavailable)
+		missing = append(missing, "machine_id")
+	}
+	if len(missing) > 0 {
+		log.Printf("[credential] validation failed: missing fields: %v", missing)
+		return fmt.Errorf("%w: missing %s", ErrCredentialsUnavailable, missing[0])
 	}
 	return nil
 }

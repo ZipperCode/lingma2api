@@ -16,7 +16,7 @@ import (
 // Embedded 1024-bit RSA public key (IDA @ 0x1425bd8e8, PKIX DER).
 const rsaPubKeyPEM = `-----BEGIN PUBLIC KEY-----
 MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDA8iMH5c02LilrsERw9t6Pv5Nc
-4k6Pz1EaDicBMpdpxKduSZu5OANqUq8er4GM95omAGIOPoH+Nx0spthYA2BqGz+l
+4k6Pz1EaDicBMpdpxKduSZu5OANqUq8er4GM95omAGIOPOh+Nx0spthYA2BqGz+l
 6HRkPJ7S236FZz73In/KVuLnwI8JJ2CbuJap8kvheCCZpmAWpb/cPx/3Vr/J6I17
 XcW+ML9FoCI6AOvOzwIDAQAB
 -----END PUBLIC KEY-----`
@@ -39,17 +39,29 @@ func init() {
 	}
 }
 
-// cosyUserInfo mirrors the reduced JSON structure used in IDA v118 (9 fields).
+// cosyUserInfo mirrors the full JSON structure used by Lingma (21 fields).
+// This matches the Python implementation in lingma_oauth_standalone.py.
 type cosyUserInfo struct {
-	Name               string `json:"name"`
-	AID                string `json:"aid"`
-	UID                string `json:"uid"`
-	YxUID              string `json:"yx_uid"`
-	OrganizationID     string `json:"organization_id"`
-	OrganizationName   string `json:"organization_name"`
-	UserType           string `json:"user_type"`
-	SecurityOauthToken string `json:"security_oauth_token"`
-	RefreshToken       string `json:"refresh_token"`
+	Name                 string `json:"name"`
+	AID                  string `json:"aid"`
+	UID                  string `json:"uid"`
+	YxUID                string `json:"yx_uid"`
+	OrganizationID       string `json:"organization_id"`
+	OrganizationName     string `json:"organization_name"`
+	StaffID              string `json:"staffId"`
+	AvatarURL            string `json:"avatar_url"`
+	Key                  string `json:"key"`
+	EncryptUserInfo      string `json:"encrypt_user_info"`
+	UserSourceChannel    string `json:"user_source_channel"`
+	SecurityOauthToken   string `json:"security_oauth_token"`
+	RefreshToken         string `json:"refresh_token"`
+	ExpireTime           int    `json:"expire_time"`
+	UserType             string `json:"user_type"`
+	DataPolicyAgreed     bool   `json:"data_policy_agreed"`
+	Email                string `json:"email"`
+	IsDataPolicyModifiable bool  `json:"is_data_policy_modifiable"`
+	IsQuotaExceeded      bool   `json:"is_quota_exceeded"`
+	OrganizationTags     any    `json:"organization_tags"`
 }
 
 // CosyCredentialInput holds the user info needed to generate COSY credentials.
@@ -71,7 +83,7 @@ type CosyCredentialInput struct {
 // Algorithm:
 //  1. Generate random 16-char hex string as AES temp key (uuid-style)
 //  2. RSA-PKCS1v15 encrypt tempKey with embedded pubkey → base64 → cosy_key
-//  3. Build reduced 9-field CosyUserInfo JSON → AES-128-CBC(key=IV=tempKey, PKCS7) → base64 → encrypt_user_info
+//  3. Build full 21-field CosyUserInfo JSON → AES-128-CBC(key=IV=tempKey, PKCS7) → base64 → encrypt_user_info
 func GenerateCosyCredentials(in CosyCredentialInput) (cosyKey, encryptUserInfo string, err error) {
 	// Generate 16 random bytes, encode as hex, take first 16 chars (uuid-style)
 	var randBuf [16]byte
@@ -88,26 +100,39 @@ func GenerateCosyCredentials(in CosyCredentialInput) (cosyKey, encryptUserInfo s
 	}
 	cosyKey = base64.StdEncoding.EncodeToString(encryptedKey)
 
-	// Build CosyUserInfo JSON (9-field reduced structure)
+	// Build full CosyUserInfo JSON (21-field structure matching Lingma)
 	aid := in.AID
 	if aid == "" {
 		aid = in.UID
 	}
 	userType := in.UserType
 	if userType == "" {
-		userType = "personal_standard"
+		userType = "" // Python uses empty string, not "personal_standard"
 	}
 	info := cosyUserInfo{
-		Name:               in.Name,
-		AID:                aid,
-		UID:                in.UID,
-		YxUID:              in.YxUID,
-		OrganizationID:     in.OrganizationID,
-		OrganizationName:   in.OrganizationName,
-		UserType:           userType,
-		SecurityOauthToken: in.SecurityOAuthToken,
-		RefreshToken:       in.RefreshToken,
+		Name:                 in.Name,
+		AID:                  aid,
+		UID:                  in.UID,
+		YxUID:                "", // empty per Python
+		OrganizationID:       "", // empty per Python
+		OrganizationName:     "", // empty per Python
+		StaffID:              "", // empty per Python
+		AvatarURL:            "", // empty per Python
+		Key:                  "", // empty per Python
+		EncryptUserInfo:      "", // empty per Python
+		UserSourceChannel:    "", // empty per Python
+		SecurityOauthToken:   in.SecurityOAuthToken,
+		RefreshToken:         in.RefreshToken,
+		ExpireTime:           0, // 0 per Python
+		UserType:             userType,
+		DataPolicyAgreed:     false, // false per Python
+		Email:                "", // empty per Python
+		IsDataPolicyModifiable: false, // false per Python
+		IsQuotaExceeded:      false, // false per Python
+		OrganizationTags:     nil, // null per Python
 	}
+
+	// Use compact JSON encoding (no spaces) to match Python's separators=(",", ":")
 	infoJSON, jsonErr := json.Marshal(info)
 	if jsonErr != nil {
 		return "", "", fmt.Errorf("marshal cosy user info: %w", jsonErr)

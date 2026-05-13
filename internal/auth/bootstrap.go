@@ -105,7 +105,16 @@ func WaitForCallbackWithOptions(ctx context.Context, listenAddr, callbackPath st
 		captured.Referer = request.Header.Get("Referer")
 		writer.Header().Set("Content-Type", "text/html; charset=utf-8")
 		writer.Header().Set("Access-Control-Allow-Origin", "*")
-		if opts.AutoInjectHTML {
+
+		// V2 callback: auth+token in query params -> success page
+		if captured.Query.Get("auth") != "" && captured.Query.Get("token") != "" {
+			_, _ = writer.Write([]byte(`<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>Lingma Auth</title></head>
+<body style="font-family:system-ui;text-align:center;padding:60px">
+<h1 style="color:#4CAF50">ç»å½æå</h1>
+<p>å­æ®å·²è·åï¼å¯ä»¥å³é­æ­¤çªå£ã</p>
+</body></html>`))
+		} else if opts.AutoInjectHTML {
 			_, _ = writer.Write([]byte(CallbackAutoInjectHTML))
 		} else {
 			_, _ = writer.Write([]byte(`<!DOCTYPE html>
@@ -131,7 +140,9 @@ copy(window.user_info)
 	}
 	mux.HandleFunc(callbackPath, getHandler)
 	// Also register /auth/callback (Lingma V2 actual callback path)
-	mux.HandleFunc("/auth/callback", getHandler)
+	if callbackPath != "/auth/callback" {
+		mux.HandleFunc("/auth/callback", getHandler)
+	}
 	if callbackPath != "/callback" {
 		mux.HandleFunc("/callback", getHandler)
 	}
@@ -226,8 +237,7 @@ func WrapLingmaLoginURLForBrowser(loginURL string) (string, error) {
 		return loginURL, nil
 	}
 
-	inner := "https://account.alibabacloud.com/login/login.htm?oauth_callback=" + url.QueryEscape(loginURL)
-	return "https://account.alibabacloud.com/logout/logout.htm?oauth_callback=" + url.QueryEscape(inner), nil
+	return "https://account.alibabacloud.com/login/login.htm?oauth_callback=" + url.QueryEscape(loginURL), nil
 }
 
 func RewriteLingmaLoginURLPort(loginURL, listenAddr string) (string, error) {

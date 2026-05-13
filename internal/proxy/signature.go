@@ -60,12 +60,13 @@ func (engine *SignatureEngine) BuildBearer(credential CredentialSnapshot, path, 
 	}
 
 	payloadBase64 := base64.StdEncoding.EncodeToString(payloadBytes)
+	sigPath := normalizePath(path)
 	preimage := strings.Join([]string{
 		payloadBase64,
 		credential.CosyKey,
 		date,
 		body,
-		normalizePath(path),
+		sigPath,
 	}, "\n")
 	signature := md5.Sum([]byte(preimage))
 

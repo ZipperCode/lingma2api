@@ -200,7 +200,7 @@ export interface AdminModelsResponse {
 
 export interface AccountData {
   credential: {
-    cos_y_key: string;
+    cosy_key: string;
     encrypt_user_info: string;
     user_id: string;
     machine_id: string;
@@ -211,12 +211,41 @@ export interface AccountData {
     has_credentials: boolean;
     source: string;
     loaded_at: string;
+    token_expired?: boolean;
   };
   token_stats: {
     today: number;
     week: number;
     total: number;
   };
+  stored_meta?: {
+    schema_version: number;
+    source: string;
+    lingma_version_hint: string;
+    obtained_at: string;
+    updated_at: string;
+    token_expire_time: string;
+  };
+  oauth?: {
+    has_access_token: boolean;
+    has_refresh_token: boolean;
+  };
+}
+
+export interface AccountTestResult {
+  success: boolean;
+  status_code: number;
+  response_preview: string;
+  error: string;
+  credential_snapshot: {
+    has_cosy_key: boolean;
+    has_encrypt_user_info: boolean;
+    has_user_id: boolean;
+    has_machine_id: boolean;
+    cosy_key_prefix: string;
+    user_id: string;
+  };
+  timestamp: string;
 }
 
 export type BootstrapMethod = 'auto' | 'ws' | 'remote_callback';

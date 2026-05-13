@@ -114,12 +114,18 @@ func main() {
 		cfg.Lingma.OAuthListenAddr,
 		cfg.Lingma.CosyVersion,
 	)
+	bootstrapMgr.OnCredentialSaved = func() {
+		if _, err := credentials.Refresh(context.Background()); err != nil {
+			log.Printf("[bootstrap] credential reload after save: %v", err)
+		}
+	}
 
 	handler := api.NewServer(api.Dependencies{
 		Credentials: credentials,
 		Models:      models,
 		Sessions:    sessions,
 		Transport:   transport,
+		Uploader:    transport,
 		Builder:     builder,
 		AdminToken:  cfg.Server.AdminToken,
 		Now:         time.Now,

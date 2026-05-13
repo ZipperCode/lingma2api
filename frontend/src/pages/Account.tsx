@@ -1,9 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
-import { RefreshCw, X, Cpu, Globe, Download } from 'lucide-react';
-import { getAccount, refreshAccount, startBootstrap, getBootstrapStatus, cancelBootstrap, importCache } from '../api/client';
+import { RefreshCw, X, Cpu, Globe, Download, Zap, AlertTriangle, CheckCircle } from 'lucide-react';
+import { getAccount, refreshAccount, startBootstrap, getBootstrapStatus, cancelBootstrap, importCache, testAccountConnection } from '../api/client';
 import { StatCard } from '../components/StatCard';
 import { Skeleton } from '../components/Skeleton';
-import type { AccountData, BootstrapMethod, BootstrapResponse } from '../types';
+import type { AccountData, AccountTestResult, BootstrapMethod, BootstrapResponse } from '../types';
 
 const BOOTSTRAP_PHASES = [
   { key: 'waiting_callback', label: '等待浏览器认证', icon: '1' },
@@ -44,12 +44,37 @@ function PhaseProgress({ phase, status }: { phase?: string; status: string }) {
   );
 }
 
+function Badge({ ok, label }: { ok: boolean; label: string }) {
+  return (
+    <span className={`badge ${ok ? 'badge-success' : 'badge-error'}`} style={{ fontSize: 12 }}>
+      {ok ? label : `缺失 ${label}`}
+    </span>
+  );
+}
+
+function formatExpireTime(ms: string): string {
+  if (!ms) return '-';
+  const n = parseInt(ms, 10);
+  if (n <= 0) return '-';
+  const date = new Date(n);
+  return date.toLocaleString();
+}
+
+function isExpired(ms: string): boolean {
+  if (!ms) return false;
+  const n = parseInt(ms, 10);
+  if (n <= 0) return false;
+  return Date.now() > n;
+}
+
 export function Account() {
   const [data, setData] = useState<AccountData | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [bootstrap, setBootstrap] = useState<BootstrapResponse | null>(null);
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState<{ status: string; user_id: string } | null>(null);
+  const [testResult, setTestResult] = useState<AccountTestResult | null>(null);
+  const [testing, setTesting] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval>>();
   const [loading, setLoading] = useState(true);
   const [remaining, setRemaining] = useState<string>('');
@@ -114,6 +139,32 @@ export function Account() {
       setImportResult({ status: 'error', user_id: e instanceof Error ? e.message : String(e) });
     }
     setImporting(false);
+  };
+
+  const handleTest = async () => {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const result = await testAccountConnection();
+      setTestResult(result);
+    } catch (e) {
+      setTestResult({
+        success: false,
+        status_code: 0,
+        response_preview: '',
+        error: e instanceof Error ? e.message : String(e),
+        credential_snapshot: {
+          has_cosy_key: false,
+          has_encrypt_user_info: false,
+          has_user_id: false,
+          has_machine_id: false,
+          cosy_key_prefix: '',
+          user_id: '',
+        },
+        timestamp: new Date().toISOString(),
+      });
+    }
+    setTesting(false);
   };
 
   const handleBootstrap = async (method: BootstrapMethod) => {
@@ -184,6 +235,12 @@ export function Account() {
     );
   }
 
+  const hasCosy = data.credential?.cosy_key !== '';
+  const hasEUI = data.credential?.encrypt_user_info !== '';
+  const hasUID = data.credential?.user_id !== '';
+  const hasMID = data.credential?.machine_id !== '';
+  const tokenExpired = isExpired(data.stored_meta?.token_expire_time || '');
+
   return (
     <div>
       <div className="page-header">
@@ -214,6 +271,10 @@ export function Account() {
           <button className="btn" onClick={handleRefresh} disabled={refreshing}>
             <RefreshCw size={16} />
             {refreshing ? '刷新中...' : '刷新凭据'}
+          </button>
+          <button className="btn" onClick={handleTest} disabled={testing}>
+            <Zap size={16} />
+            {testing ? '测试中...' : '测试连接'}
           </button>
         </div>
       </div>
@@ -289,14 +350,56 @@ export function Account() {
         </div>
       )}
 
+      {testResult && (
+        <div className="card" style={{ marginBottom: 16, borderLeft: testResult.success ? '3px solid var(--success)' : '3px solid var(--error)' }}>
+          <h4 style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+            {testResult.success ? <CheckCircle size={18} color="var(--success)" /> : <AlertTriangle size={18} color="var(--error)" />}
+            API 连接测试
+          </h4>
+          <table>
+            <tbody>
+              <tr><td style={{ fontWeight: 600 }}>状态</td><td>
+                <span className={`badge ${testResult.success ? 'badge-success' : 'badge-error'}`}>
+                  {testResult.success ? '成功' : '失败'}
+                </span>
+              </td></tr>
+              <tr><td style={{ fontWeight: 600 }}>HTTP 状态码</td><td>{testResult.status_code || '-'}</td></tr>
+              <tr><td style={{ fontWeight: 600 }}>响应预览</td><td>{testResult.response_preview || '-'}</td></tr>
+              {testResult.error && <tr><td style={{ fontWeight: 600 }}>错误信息</td><td style={{ color: 'var(--error)' }}>{testResult.error}</td></tr>}
+              <tr><td style={{ fontWeight: 600 }}>CosyKey</td><td><Badge ok={testResult.credential_snapshot.has_cosy_key} label="CosyKey" /></td></tr>
+              <tr><td style={{ fontWeight: 600 }}>EncryptUserInfo</td><td><Badge ok={testResult.credential_snapshot.has_encrypt_user_info} label="EncryptUserInfo" /></td></tr>
+              <tr><td style={{ fontWeight: 600 }}>UserID</td><td><Badge ok={testResult.credential_snapshot.has_user_id} label="UserID" /> {testResult.credential_snapshot.user_id}</td></tr>
+              <tr><td style={{ fontWeight: 600 }}>MachineID</td><td><Badge ok={testResult.credential_snapshot.has_machine_id} label="MachineID" /></td></tr>
+              <tr><td style={{ fontWeight: 600 }}>CosyKey 前缀</td><td>{testResult.credential_snapshot.cosy_key_prefix || '-'}</td></tr>
+            </tbody>
+          </table>
+          {!testResult.success && testResult.error?.includes('credentials unavailable') && (
+            <p style={{ marginTop: 8, color: 'var(--text-secondary)', fontSize: 13 }}>
+              凭据不完整，请检查是否所有字段都已正确注入。建议使用「浏览器登录」重新获取完整凭据。
+            </p>
+          )}
+          {!testResult.success && (testResult.status_code === 401 || testResult.status_code === 403) && (
+            <p style={{ marginTop: 8, color: 'var(--text-secondary)', fontSize: 13 }}>
+              Token 认证失败，可能已过期或签名不匹配。请尝试「刷新凭据」或重新登录。
+            </p>
+          )}
+        </div>
+      )}
+
       <div className="card" style={{ marginBottom: 16 }}>
         <h4 style={{ marginBottom: 12 }}>用户信息</h4>
         <table>
           <tbody>
             <tr><td style={{ fontWeight: 600 }}>UserID</td><td>{data.credential?.user_id || '-'}</td></tr>
             <tr><td style={{ fontWeight: 600 }}>MachineID</td><td>{data.credential?.machine_id || '-'}</td></tr>
-            <tr><td style={{ fontWeight: 600 }}>CosyKey</td><td>{data.credential?.cos_y_key ? mask(data.credential.cos_y_key) : '-'}</td></tr>
-            <tr><td style={{ fontWeight: 600 }}>EncryptUserInfo</td><td>{data.credential?.encrypt_user_info ? mask(data.credential.encrypt_user_info) : '-'}</td></tr>
+            <tr><td style={{ fontWeight: 600 }}>CosyKey</td><td>
+              <Badge ok={hasCosy} label="CosyKey" />
+              {hasCosy && <span style={{ marginLeft: 8 }}>{mask(data.credential?.cosy_key || '')}</span>}
+            </td></tr>
+            <tr><td style={{ fontWeight: 600 }}>EncryptUserInfo</td><td>
+              <Badge ok={hasEUI} label="EncryptUserInfo" />
+              {hasEUI && <span style={{ marginLeft: 8 }}>{mask(data.credential?.encrypt_user_info || '')}</span>}
+            </td></tr>
           </tbody>
         </table>
       </div>
@@ -311,10 +414,35 @@ export function Account() {
                 {data.status?.loaded ? '有效' : '无效'}
               </span></td>
             </tr>
+            {tokenExpired && (
+              <tr>
+                <td style={{ fontWeight: 600 }}>Token 过期</td>
+                <td><span className="badge badge-error"><AlertTriangle size={12} style={{ marginRight: 4 }} />已过期</span></td>
+              </tr>
+            )}
             <tr><td style={{ fontWeight: 600 }}>加载时间</td><td>{data.status?.loaded_at ? new Date(data.status.loaded_at).toLocaleString() : '-'}</td></tr>
             <tr><td style={{ fontWeight: 600 }}>来源</td><td>{data.status?.source || '-'}</td></tr>
+            <tr><td style={{ fontWeight: 600 }}>Token 过期时间</td><td>{formatExpireTime(data.stored_meta?.token_expire_time || '')}</td></tr>
+            <tr><td style={{ fontWeight: 600 }}>Lingma 版本</td><td>{data.stored_meta?.lingma_version_hint || '-'}</td></tr>
+            <tr><td style={{ fontWeight: 600 }}>获取时间</td><td>{data.stored_meta?.obtained_at ? new Date(data.stored_meta.obtained_at).toLocaleString() : '-'}</td></tr>
+            <tr><td style={{ fontWeight: 600 }}>更新时间</td><td>{data.stored_meta?.updated_at ? new Date(data.stored_meta.updated_at).toLocaleString() : '-'}</td></tr>
           </tbody>
         </table>
+      </div>
+
+      <div className="card" style={{ marginBottom: 16 }}>
+        <h4 style={{ marginBottom: 12 }}>OAuth Token 状态</h4>
+        <table>
+          <tbody>
+            <tr><td style={{ fontWeight: 600 }}>Access Token</td><td><Badge ok={data.oauth?.has_access_token || false} label="Access Token" /></td></tr>
+            <tr><td style={{ fontWeight: 600 }}>Refresh Token</td><td><Badge ok={data.oauth?.has_refresh_token || false} label="Refresh Token" /></td></tr>
+          </tbody>
+        </table>
+        {!data.oauth?.has_access_token && (
+          <p style={{ marginTop: 8, color: 'var(--text-secondary)', fontSize: 13 }}>
+            OAuth Token 缺失，自动刷新功能不可用。建议使用「浏览器登录」获取完整凭据。
+          </p>
+        )}
       </div>
 
       <div className="card">

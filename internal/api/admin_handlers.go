@@ -3,8 +3,10 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log"
 	"math"
 	"net/http"
 	"regexp"
@@ -236,15 +238,105 @@ func (server *Server) handleAdminAccount(w http.ResponseWriter, r *http.Request)
 	}
 	cred, _ := server.deps.Credentials.Current(r.Context())
 	today, week, total, _ := server.db.GetTokenStats(r.Context())
+	storedMeta := server.deps.Credentials.StoredMeta()
+	hasAT, hasRT := server.deps.Credentials.HasOAuth()
 	writeJSON(w, http.StatusOK, map[string]any{
-		"credential": cred,
-		"status":     server.deps.Credentials.Status(),
+		"credential":   cred,
+		"status":       server.deps.Credentials.Status(),
 		"token_stats": map[string]int{
 			"today": today,
 			"week":  week,
 			"total": total,
 		},
+		"stored_meta": storedMeta,
+		"oauth": map[string]bool{
+			"has_access_token":  hasAT,
+			"has_refresh_token": hasRT,
+		},
 	})
+}
+
+func (server *Server) handleAdminAccountTest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeMethodNotAllowed(w, http.MethodPost)
+		return
+	}
+	if !server.isAdminAuthorized(r) {
+		writeOpenAIError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	cred, err := server.deps.Credentials.Current(r.Context())
+	if err != nil {
+		log.Printf("[account-test] credential load failed: %v", err)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"success":      false,
+			"status_code":  0,
+			"response_preview": "",
+			"error":        err.Error(),
+			"credential_snapshot": map[string]bool{
+				"has_cosy_key":         false,
+				"has_encrypt_user_info": false,
+				"has_user_id":          false,
+				"has_machine_id":       false,
+			},
+			"timestamp": server.deps.Now().Format(time.RFC3339),
+		})
+		return
+	}
+
+	snapshot := map[string]bool{
+		"has_cosy_key":          cred.CosyKey != "",
+		"has_encrypt_user_info": cred.EncryptUserInfo != "",
+		"has_user_id":           cred.UserID != "",
+		"has_machine_id":        cred.MachineID != "",
+	}
+
+	// Log credential details for diagnosis
+	log.Printf("[account-test] credential: user_id=%s machine_id=%s cosy_key_len=%d encrypt_info_len=%d source=%s",
+		cred.UserID, cred.MachineID, len(cred.CosyKey), len(cred.EncryptUserInfo), cred.Source)
+
+	models, testErr := server.deps.Models.ListModels(r.Context())
+	if testErr != nil {
+		var upstream *proxy.UpstreamHTTPError
+		statusCode := 0
+		responsePreview := ""
+		if errors.As(testErr, &upstream) {
+			statusCode = upstream.StatusCode
+			responsePreview = upstream.Body
+		}
+		log.Printf("[account-test] ListModels failed: %v (status=%d)", testErr, statusCode)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"success":           false,
+			"status_code":       statusCode,
+			"response_preview":  responsePreview,
+			"error":             testErr.Error(),
+			"credential_snapshot": snapshot,
+			"cosy_key_prefix":   safePrefix(cred.CosyKey, 20),
+			"user_id":           cred.UserID,
+			"timestamp":         server.deps.Now().Format(time.RFC3339),
+		})
+		return
+	}
+
+	log.Printf("[account-test] ListModels success: %d models", len(models))
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success":           true,
+		"status_code":       200,
+		"response_preview":  fmt.Sprintf("ListModels returned %d models", len(models)),
+		"error":             "",
+		"credential_snapshot": snapshot,
+		"cosy_key_prefix":   safePrefix(cred.CosyKey, 20),
+		"user_id":           cred.UserID,
+		"timestamp":         server.deps.Now().Format(time.RFC3339),
+	})
+}
+
+func safePrefix(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }
 
 func (server *Server) handleAdminAccountRefresh(w http.ResponseWriter, r *http.Request) {

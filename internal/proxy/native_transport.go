@@ -152,3 +152,71 @@ func (t *NativeTransport) ListModels(ctx context.Context, credential CredentialS
 	}
 	return append(payload.Chat, payload.Inline...), nil
 }
+
+// UploadImage uploads an image to Lingma CDN and returns the CDN URL.
+// imageURI can be a data URI (data:<media>;base64,<payload>) or an http(s) URL.
+// For http(s) URLs, the image is re-uploaded to Lingma CDN.
+func (t *NativeTransport) UploadImage(ctx context.Context, credential CredentialSnapshot, imageURI string) (string, error) {
+	requestID := NewHexID()
+
+	// Build upload request body
+	uploadReq := ImageUploadRequest{
+		ImageUri:  imageURI,
+		RequestId: requestID,
+	}
+	bodyBytes, err := json.Marshal(uploadReq)
+	if err != nil {
+		return "", fmt.Errorf("marshaling upload request: %w", err)
+	}
+
+	// Build headers using signature engine (path needs query for request_id)
+	pathWithQuery := ImageUploadPath + "?request_id=" + requestID
+	headers, err := t.signer.BuildHeaders(ctx, credential, pathWithQuery, string(bodyBytes))
+	if err != nil {
+		return "", fmt.Errorf("building upload headers: %w", err)
+	}
+
+	// Construct full URL
+	url := t.baseURL + ImageUploadPath + "?request_id=" + requestID
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(string(bodyBytes)))
+	if err != nil {
+		return "", fmt.Errorf("creating upload request: %w", err)
+	}
+
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
+
+	t.mu.RLock()
+	client := t.client
+	t.mu.RUnlock()
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("upload request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("reading upload response: %w", err)
+	}
+
+	if resp.StatusCode >= 400 {
+		return "", &UpstreamHTTPError{
+			StatusCode: resp.StatusCode,
+			Body:       strings.TrimSpace(string(respBody)),
+		}
+	}
+
+	var uploadResp ImageUploadResponse
+	if err := json.Unmarshal(respBody, &uploadResp); err != nil {
+		return "", fmt.Errorf("parsing upload response: %w", err)
+	}
+
+	if !uploadResp.Data.Success {
+		return "", fmt.Errorf("upload failed: success=false")
+	}
+
+	return uploadResp.Data.ImageUrl, nil
+}

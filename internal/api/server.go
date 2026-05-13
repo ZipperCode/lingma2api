@@ -22,6 +22,8 @@ type CredentialProvider interface {
 	Current(context.Context) (proxy.CredentialSnapshot, error)
 	Refresh(context.Context) (proxy.CredentialSnapshot, error)
 	Status() proxy.CredentialStatus
+	StoredMeta() proxy.StoredMetaInfo
+	HasOAuth() (bool, bool)
 }
 
 type ModelService interface {
@@ -43,6 +45,10 @@ type ChatTransport interface {
 	StreamChat(context.Context, proxy.RemoteChatRequest, proxy.CredentialSnapshot) (io.ReadCloser, error)
 }
 
+type ImageUploader interface {
+	UploadImage(ctx context.Context, credential proxy.CredentialSnapshot, imageURI string) (cdnURL string, err error)
+}
+
 type RequestBuilder interface {
 	BuildCanonical(proxy.CanonicalRequest, string) (proxy.RemoteChatRequest, error)
 }
@@ -52,6 +58,7 @@ type Dependencies struct {
 	Models      ModelService
 	Sessions    SessionStore
 	Transport   ChatTransport
+	Uploader    ImageUploader
 	Builder     RequestBuilder
 	AdminToken  string
 	Now         func() time.Time
@@ -117,6 +124,7 @@ func NewServer(deps Dependencies, store *db.Store) http.Handler {
 	mux.HandleFunc("/admin/models", server.handleAdminModels)
 	mux.HandleFunc("/admin/account", server.handleAdminAccount)
 	mux.HandleFunc("/admin/account/refresh", server.handleAdminAccountRefresh)
+	mux.HandleFunc("/admin/account/test", server.handleAdminAccountTest)
 	mux.HandleFunc("/admin/account/bootstrap", server.handleAdminAccountBootstrap)
 	mux.HandleFunc("/admin/account/bootstrap/status", server.handleAdminAccountBootstrapStatus)
 	mux.HandleFunc("/admin/account/import-cache", server.handleAdminAccountImportCache)
@@ -297,6 +305,20 @@ func (server *Server) handleChatCompletions(writer http.ResponseWriter, request 
 		writeMappedError(writer, err)
 		return
 	}
+
+	// Upload images and store URLs in metadata
+	if server.deps.Uploader != nil {
+		imageURLs, err := server.uploadImagesFromCanonicalRequest(request.Context(), credential, sessionCanonicalRequest)
+		if err != nil {
+			writeMappedError(writer, err)
+			return
+		}
+		if len(imageURLs) > 0 {
+			sessionCanonicalRequest.Metadata["image_urls"] = imageURLs
+			sessionCanonicalRequest.Metadata["is_vl"] = true
+		}
+	}
+
 	remoteRequest, err := server.deps.Builder.BuildCanonical(sessionCanonicalRequest, modelKey)
 	if err != nil {
 		writeMappedError(writer, err)
@@ -694,6 +716,44 @@ func (server *Server) handleAdminSessionDelete(writer http.ResponseWriter, reque
 		return
 	}
 	writeJSON(writer, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+// uploadImagesFromCanonicalRequest scans the canonical request for image blocks,
+// uploads them to Lingma CDN, and returns the CDN URLs.
+// For base64 images, constructs data URI and uploads.
+// For URL images, uploads them to get CDN URL.
+func (server *Server) uploadImagesFromCanonicalRequest(ctx context.Context, credential proxy.CredentialSnapshot, req proxy.CanonicalRequest) ([]string, error) {
+	var imageURLs []string
+	for _, turn := range req.Turns {
+		for _, block := range turn.Blocks {
+			if block.Type != proxy.CanonicalBlockImage && block.Type != proxy.CanonicalBlockDocument {
+				continue
+			}
+			var src proxy.ImageSource
+			if err := json.Unmarshal(block.Data, &src); err != nil {
+				return nil, fmt.Errorf("invalid image source: %w", err)
+			}
+
+			var imageURI string
+			switch src.Type {
+			case "base64":
+				// Construct data URI from base64 payload
+				imageURI = "data:" + src.MediaType + ";base64," + src.Data
+			case "url":
+				// Use the URL directly (will be re-uploaded to CDN)
+				imageURI = src.Data
+			default:
+				return nil, fmt.Errorf("unsupported image source type %q", src.Type)
+			}
+
+			cdnURL, err := server.deps.Uploader.UploadImage(ctx, credential, imageURI)
+			if err != nil {
+				return nil, fmt.Errorf("uploading image: %w", err)
+			}
+			imageURLs = append(imageURLs, cdnURL)
+		}
+	}
+	return imageURLs, nil
 }
 
 func (server *Server) isAdminAuthorized(request *http.Request) bool {

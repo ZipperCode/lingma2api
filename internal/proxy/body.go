@@ -34,6 +34,36 @@ func NewBodyBuilder(cosyVersion string, now func() time.Time, newUUID func() str
 	}
 }
 
+func extractImageURLsFromMetadata(metadata map[string]any) []string {
+	if metadata == nil {
+		return nil
+	}
+	val, ok := metadata["image_urls"]
+	if !ok {
+		return nil
+	}
+	urls, ok := val.([]string)
+	if !ok {
+		return nil
+	}
+	return urls
+}
+
+func extractIsVLFromMetadata(metadata map[string]any) bool {
+	if metadata == nil {
+		return false
+	}
+	val, ok := metadata["is_vl"]
+	if !ok {
+		return false
+	}
+	isVL, ok := val.(bool)
+	if !ok {
+		return false
+	}
+	return isVL
+}
+
 func (builder *BodyBuilder) BuildCanonical(request CanonicalRequest, modelKey string) (RemoteChatRequest, error) {
 	messages, err := projectCanonicalTurnsToLegacyMessages(request.Turns)
 	if err != nil {
@@ -45,6 +75,10 @@ func (builder *BodyBuilder) BuildCanonical(request CanonicalRequest, modelKey st
 	if request.Temperature != nil {
 		temperature = *request.Temperature
 	}
+
+	// Extract image URLs and VL flag from metadata
+	imageURLs := extractImageURLsFromMetadata(request.Metadata)
+	isVL := extractIsVLFromMetadata(request.Metadata)
 
 	serializedMessages := make([]map[string]any, 0, len(messages))
 	for _, message := range messages {
@@ -78,10 +112,7 @@ func (builder *BodyBuilder) BuildCanonical(request CanonicalRequest, modelKey st
 		"request_set_id":   "",
 		"chat_record_id":   requestID,
 		"stream":           request.Stream,
-		// TODO(vision-reverse): Lingma 远端 image_urls 字段真实格式未反向。
-		// 骨架阶段保持 nil；反向任务参见
-		// docs/superpowers/specs/2026-05-XX-vision-image-urls-reverse.md
-		"image_urls":       nil,
+		"image_urls":       imageURLs,
 		"is_reply":         false,
 		"is_retry":         false,
 		"session_id":       request.SessionID,
@@ -98,7 +129,7 @@ func (builder *BodyBuilder) BuildCanonical(request CanonicalRequest, modelKey st
 			"display_name":          "",
 			"model":                 modelKey,
 			"format":                "",
-			"is_vl":                 false,
+			"is_vl":                 isVL,
 			"is_reasoning":          request.HasReasoning,
 			"api_key":               "",
 			"url":                   "",
