@@ -9,6 +9,7 @@ import type {
   ModelMapping,
   BootstrapResponse,
   BootstrapMethod,
+  BootstrapSubmitRequest,
   PolicyRule,
   PolicyTestInput,
   PolicyTestResult,
@@ -57,10 +58,10 @@ export const refreshAdminModels = () => request<AdminModelsResponse>('/admin/mod
 // Account
 export const getAccount = () => request<AccountData>('/admin/account');
 export const refreshAccount = () => request<{ credential: unknown }>('/admin/account/refresh', { method: 'POST' });
-export const startBootstrap = (method?: BootstrapMethod) =>
+export const startBootstrap = (method: BootstrapMethod = 'remote_callback') =>
   request<BootstrapResponse>('/admin/account/bootstrap', {
     method: 'POST',
-    body: method ? JSON.stringify({ method }) : undefined,
+    body: JSON.stringify({ method }),
   });
 export const getBootstrapStatus = (id: string) =>
   request<BootstrapResponse>(`/admin/account/bootstrap/status?id=${encodeURIComponent(id)}`);
@@ -68,7 +69,11 @@ export const cancelBootstrap = (id: string) =>
   request<{ status: 'cancelled' }>(`/admin/account/bootstrap?id=${encodeURIComponent(id)}`, {
     method: 'DELETE',
   });
-export const importCache = () => request<{ status: string; user_id: string; source: string }>('/admin/account/import-cache', { method: 'POST' });
+export const submitBootstrapCallback = (payload: BootstrapSubmitRequest) =>
+  request<BootstrapResponse>('/admin/account/bootstrap/submit', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
 export const testAccountConnection = () => request<AccountTestResult>('/admin/account/test', { method: 'POST' });
 
 // Mappings

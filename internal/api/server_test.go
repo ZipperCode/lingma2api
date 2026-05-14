@@ -32,6 +32,14 @@ func (fakeCredentials) Status() proxy.CredentialStatus {
 	return proxy.CredentialStatus{Loaded: true, HasCredentials: true}
 }
 
+func (fakeCredentials) StoredMeta() proxy.StoredMetaInfo {
+	return proxy.StoredMetaInfo{}
+}
+
+func (fakeCredentials) HasOAuth() (bool, bool) {
+	return true, true
+}
+
 type fakeModels struct{}
 
 func (fakeModels) ResolveChatModel(context.Context, string) (string, error) {

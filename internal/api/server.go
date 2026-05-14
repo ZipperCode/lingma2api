@@ -127,7 +127,7 @@ func NewServer(deps Dependencies, store *db.Store) http.Handler {
 	mux.HandleFunc("/admin/account/test", server.handleAdminAccountTest)
 	mux.HandleFunc("/admin/account/bootstrap", server.handleAdminAccountBootstrap)
 	mux.HandleFunc("/admin/account/bootstrap/status", server.handleAdminAccountBootstrapStatus)
-	mux.HandleFunc("/admin/account/import-cache", server.handleAdminAccountImportCache)
+	mux.HandleFunc("/admin/account/bootstrap/submit", server.handleAdminAccountBootstrapSubmit)
 	mux.HandleFunc("/admin/settings", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			server.handleAdminSettingsGet(w, r)

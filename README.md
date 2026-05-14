@@ -1,10 +1,10 @@
 # lingma2api
 
-`lingma2api` 是一个最小 OpenAI 兼容代理，对外暴露 `/v1/models` 与 `/v1/chat/completions`，对内复用当前仓库已经验证的 Lingma 远端 HTTP/SSE 契约。
+`lingma2api` 是一个最小 OpenAI 兼容代理，对外暴露 `/v1/models`、`/v1/chat/completions` 与 `/v1/messages`，对内复用 Lingma 远端 HTTP/SSE 契约。
 
 ## 一键启动
 
-仓库根目录提供了跨平台启动脚本，前提：本机已安装 `go`、`node`、`npm`。
+仓库根目录提供跨平台启动脚本，前提：本机已安装 `go`、`node`、`npm`。
 
 ### 生产模式（构建并运行）
 
@@ -17,115 +17,87 @@
 
 ```bash
 # Linux / macOS
-chmod +x ./start.sh    # 首次执行
+chmod +x ./start.sh
 ./start.sh
 ```
 
 启动后访问：
 
-- 控制台：http://127.0.0.1:8080
-- OpenAI：http://127.0.0.1:8080/v1
-- Anthropic：http://127.0.0.1:8080/v1/messages
+- 控制台：`http://<server>:8080`
+- OpenAI：`http://<server>:8080/v1`
+- Anthropic：`http://<server>:8080/v1/messages`
 
-可选参数：
-
-```powershell
-.\start.ps1 -Config .\config.yaml   # 指定配置
-.\start.ps1 -SkipFrontend            # 复用现有 frontend-dist
-```
-
-```bash
-./start.sh -c ./config.yaml
-./start.sh --skip-frontend
-```
+默认配置会监听 `0.0.0.0:8080`，适合服务器部署。
 
 ### 开发模式（前端热更新 + 后端 go run）
 
-并行启动 Vite dev server（:3000，热更新）与 Go 后端（:8080），Vite 已配置 `/v1` 与 `/admin` 代理到后端，开发期间访问 :3000 即可。
+并行启动 Vite dev server（`:3000`，热更新）与 Go 后端（`:8080`），Vite 已配置 `/v1` 与 `/admin` 代理到后端。
 
 ```powershell
-# Windows (PowerShell) — Vite 在新窗口，后端在当前窗口
 .\dev.ps1
 ```
 
 ```bash
-# Linux / macOS
-chmod +x ./dev.sh    # 首次执行
+chmod +x ./dev.sh
 ./dev.sh
 ```
-
-按 `Ctrl+C` 停止后端，脚本会自动清理 Vite 进程。
-
-### 准备凭据
-
-启动脚本只负责构建+运行，**不会**主动获取凭据。两种方式任选其一：
-
-**方式 A：从本机 Lingma 客户端一键导入**（最快，前提是本机已登录过 Lingma）
-
-```powershell
-# Windows
-.\import-auth.ps1
-.\import-auth.ps1 -Force                              # 已存在直接覆盖
-.\import-auth.ps1 -LingmaDir D:\custom\.lingma
-```
-
-```bash
-# Linux / macOS
-chmod +x ./import-auth.sh    # 首次执行
-./import-auth.sh
-./import-auth.sh --force
-./import-auth.sh -d ~/.lingma -o ./auth/credentials.json
-```
-
-脚本会读取 `~/.lingma/cache/`，派生凭据并写入 `./auth/credentials.json`，仅作一次性迁移。
-
-**方式 B：通过 OAuth 全新授权**（无本机 Lingma 时使用）
-
-参考下文 [Bootstrap 说明](#bootstrap-说明) 走完整 OAuth 流程。
-
-完成后：
-
-1. 确认 `config.yaml` 中 `credential.auth_file` 指向正确路径
-2. 运行 `.\start.ps1` / `./start.sh` 启动
 
 ## 当前能力
 
 - `GET /v1/models`
 - `POST /v1/chat/completions`
+- `POST /v1/messages`
 - `stream=true` 与 `stream=false`
-- `extra_body.session_id` / `X-Session-Id`
 - `GET /admin/status`
-- `POST /admin/refresh`
-- `GET /admin/sessions`
-- `DELETE /admin/sessions/{id}`
-
-### Vision 输入（骨架）
-
-- 接受 OpenAI `image_url` 与 Anthropic `image` content block 的入站解析与限额校验。
-- **默认行为**：含图请求返回 `501 vision_not_implemented`（OpenAI）/ `not_supported_yet`（Anthropic）。
-- **软兜底**：在 `/admin/settings` 中设置 `vision_fallback_enabled=true`，含图请求会把图片元数据合并入文本继续处理（模型不会真正看见图）。
-- **限额**：单图 5 MB / 单请求 4 张 / 单请求总 10 MB；白名单 `image/png|jpeg|gif|webp`。
-- **真发图能力**：尚未实现，待后续反向 Lingma 远端 `image_urls` 字段格式后接线。
+- `GET /admin/account`
+- `POST /admin/account/bootstrap`
+- `POST /admin/account/bootstrap/submit`
+- `GET /admin/account/bootstrap/status`
+- `POST /admin/account/test`
 
 ## 运行态认证边界
 
-运行态只读取当前项目内的认证文件：
+运行态只读取项目内的认证文件：
 
-1. `auth/credentials.json`
+- `credential.auth_file`（默认 `./auth/credentials.json`）
 
-不再支持以下运行态来源：
+服务启动时不再自动：
 
-1. `~/.lingma/*`
-2. `portable_config.json`
-3. 环境变量凭据注入
+- 读取 `~/.lingma/*`
+- 连接本地 Lingma WebSocket `127.0.0.1:37010`
+- 在服务器本机监听 `127.0.0.1:37510` 等待浏览器自动回调
 
-`~/.lingma/*` 只允许用于测试、研究或一次性迁移工具。
+也就是说，服务器本身不需要浏览器、不需要本地 Lingma 客户端，也不要求存在 `~/.lingma`。
+
+## 服务器版登录流程
+
+推荐使用管理页完成账号接入：
+
+1. 启动服务并打开“账号管理”页
+2. 点击“浏览器登录”生成登录链接
+3. 在你自己的浏览器中打开该链接并完成阿里云登录
+4. 登录完成后，浏览器会跳到 `http://127.0.0.1:37510/...`
+5. 即使页面打不开，也直接复制地址栏里的完整回调 URL
+6. 把该 URL 粘贴回管理页输入框并提交
+7. 服务端解析 `auth` / `token`，生成并保存 `credentials.json`
+8. 使用“测试连接”或请求 `/v1/models` 验证
+
+### 关于 `127.0.0.1:37510`
+
+配置里的：
+
+```yaml
+lingma:
+  oauth_callback_addr: "127.0.0.1:37510"
+```
+
+表示“用户浏览器登录完成后要跳转到的本地回调地址”，用于生成 Lingma 登录链接；它不是服务器实际监听的端口。
 
 ## 认证文件
 
 请参考：
 
-1. `auth/credentials.example.json`
+- `auth/credentials.example.json`
 
 当前推荐路径由 `config.yaml` 中的 `credential.auth_file` 指定，默认值为：
 
@@ -135,84 +107,14 @@ chmod +x ./import-auth.sh    # 首次执行
 
 文件中至少要包含：
 
-1. `auth.cosy_key`
-2. `auth.encrypt_user_info`
-3. `auth.user_id`
-4. `auth.machine_id`
-
-## Bootstrap 说明
-
-`cmd/lingma-auth-bootstrap` 是完整的一次性授权引导工具，负责生成 OAuth 链接、监听回调、交换 token、派生 Lingma 凭据，最终写出可被主服务直接使用的 `auth/credentials.json`。
-
-### 完整授权流程
-
-```bash
-cd lingma2api
-go run ./cmd/lingma-auth-bootstrap --output ./auth/credentials.json
-```
-
-流程：
-
-1. 自动生成 `machine_id` (用作 OAuth `client_id`)
-2. 生成 PKCE(state + verifier + challenge)
-3. 构造浏览器 OAuth 链接
-4. 在本地 `127.0.0.1:37510/callback` 启动一次性回调监听
-5. 用户在浏览器完成登录
-6. 捕获回调中的 `authorization_code`
-7. 向 Alibaba OAuth token endpoint 交换 `access_token` + `refresh_token` + `id_token`
-8. 从 `id_token` 解码 `user_id` 和 `username`
-9. 启动临时 Lingma 实例并通过 `auth/device_login` 同步凭据
-10. 从 Lingma 工作目录读取 `cosy_key`、`encrypt_user_info` 等
-11. 写入 `auth/credentials.json`
-12. 清理临时 Lingma 实例
-
-### 可选参数
-
-```
---client-id        OAuth client_id (默认自动生成 UUID 格式 machine_id)
---listen-addr      本地回调监听地址 (默认 127.0.0.1:37510)
---redirect-url     显式回调 URL (默认 http://<listen-addr>/callback)
---output           输出文件路径 (默认 ./auth/credentials.json)
---lingma-bin       Lingma 二进制路径 (默认自动探测 ~/.lingma/bin/ 下最新版本)
---use-lingma       使用本地 Lingma 完成凭据派生 (默认 true)
---print-only       仅打印 OAuth 链接和 PKCE 参数，不执行完整流程
-```
-
-### 使用场景
-
-**场景 A：新机器首次授权** (无需本地 Lingma 缓存)
-
-```bash
-go run ./cmd/lingma-auth-bootstrap
-```
-
-**场景 B：仅获取 OAuth 链接** (调试/手动操作)
-
-```bash
-go run ./cmd/lingma-auth-bootstrap --print-only
-```
-
-**场景 C：指定 Lingma 二进制路径**
-
-```bash
-go run ./cmd/lingma-auth-bootstrap --lingma-bin /path/to/Lingma
-```
-
-## 一次性迁移工具
-
-如果本机已有 Lingma 登录态（`~/.lingma/cache/user` 存在），可用一键迁移：
-
-```bash
-cd lingma2api
-go run ./cmd/lingma-import-cache --lingma-dir ~/.lingma --output ./auth/credentials.json
-```
-
-这个命令读取本机 Lingma 缓存文件并导出项目内认证文件，不改变主服务运行态边界。
+- `auth.cosy_key`
+- `auth.encrypt_user_info`
+- `auth.user_id`
+- `auth.machine_id`
 
 ## 启动
 
 ```bash
-cd lingma2api
 go run . -config ./config.yaml
 ```
 
@@ -241,9 +143,19 @@ curl -N http://127.0.0.1:8080/v1/chat/completions \
 - `Authorization: Bearer <admin_token>`
 - `X-Admin-Token: <admin_token>`
 
+## 离线辅助工具
+
+以下工具仍保留在仓库中，适合本地研究、迁移或调试使用，但不属于服务器主运行态：
+
+- `cmd/lingma-auth-bootstrap`
+- `cmd/lingma-import-cache`
+- `cmd/ws-refresh-test`
+- `import-auth.sh` / `import-auth.ps1`
+
+主 README 不再把这些工具作为生产接入主路径。
+
 ## 限制
 
 - 当前远端传输依赖本机可执行的 `curl`
-- 当前实现仅覆盖最小 OpenAI Chat Completions 子集
-- `/admin/refresh` 当前返回 `501`，提示重新执行 bootstrap
-- Vision：当前仅有协议骨架。真发图（`image_urls` 字段）需等待反向任务交付。
+- 当前实现仅覆盖最小 OpenAI Chat Completions / Anthropic Messages 子集
+- `POST /admin/account/refresh` 现在主要用于重新读取磁盘凭据，不再表示本地 WebSocket 续期

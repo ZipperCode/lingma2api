@@ -1,26 +1,25 @@
 import { useState, useEffect, useRef } from 'react';
-import { RefreshCw, X, Cpu, Globe, Download, Zap, AlertTriangle, CheckCircle } from 'lucide-react';
-import { getAccount, refreshAccount, startBootstrap, getBootstrapStatus, cancelBootstrap, importCache, testAccountConnection } from '../api/client';
+import { RefreshCw, X, Globe, Zap, AlertTriangle, CheckCircle, ClipboardPaste } from 'lucide-react';
+import { getAccount, refreshAccount, startBootstrap, getBootstrapStatus, cancelBootstrap, submitBootstrapCallback, testAccountConnection } from '../api/client';
 import { StatCard } from '../components/StatCard';
 import { Skeleton } from '../components/Skeleton';
 import type { AccountData, AccountTestResult, BootstrapMethod, BootstrapResponse } from '../types';
 
 const BOOTSTRAP_PHASES = [
-  { key: 'waiting_callback', label: '等待浏览器认证', icon: '1' },
-  { key: 'parsing_credentials', label: '解码凭据', icon: '2' },
-  { key: 'generating_cosy', label: '生成 COSY 密钥', icon: '3' },
-  { key: 'saving', label: '保存完成', icon: '4' },
-  { key: 'parsing_page_capture', label: '解析页面捕获', icon: '2b' },
-  { key: 'deriving_remote', label: '远程派生凭据', icon: '3b' },
+  { key: 'awaiting_callback_url', label: '等待回填链接', icon: '1' },
+  { key: 'parsing_callback', label: '解析回调', icon: '2' },
+  { key: 'generating_cosy', label: '生成 COSY', icon: '3' },
+  { key: 'deriving_remote', label: '远程派生', icon: '4' },
+  { key: 'saving', label: '保存完成', icon: '5' },
 ];
 
 function PhaseProgress({ phase, status }: { phase?: string; status: string }) {
-  if (status !== 'running' || !phase) return null;
+  if (!phase) return null;
   const currentIdx = BOOTSTRAP_PHASES.findIndex(p => p.key === phase);
   return (
     <div style={{ display: 'flex', gap: 4, marginTop: 12, alignItems: 'center' }}>
-      {BOOTSTRAP_PHASES.filter(p => !p.key.endsWith('b')).map((p, i) => {
-        const active = i === currentIdx || (i < currentIdx);
+      {BOOTSTRAP_PHASES.map((p, i) => {
+        const active = currentIdx >= 0 && i <= currentIdx;
         const isCurrent = i === currentIdx;
         return (
           <div key={p.key} style={{
@@ -71,8 +70,8 @@ export function Account() {
   const [data, setData] = useState<AccountData | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [bootstrap, setBootstrap] = useState<BootstrapResponse | null>(null);
-  const [importing, setImporting] = useState(false);
-  const [importResult, setImportResult] = useState<{ status: string; user_id: string } | null>(null);
+  const [callbackURL, setCallbackURL] = useState('');
+  const [submittingCallback, setSubmittingCallback] = useState(false);
   const [testResult, setTestResult] = useState<AccountTestResult | null>(null);
   const [testing, setTesting] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval>>();
@@ -104,7 +103,7 @@ export function Account() {
 
   useEffect(() => {
     const status = bootstrap?.status;
-    const inFlight = status === 'running' || status === 'awaiting_callback' || status === 'deriving';
+    const inFlight = status === 'awaiting_callback_url' || status === 'running';
     if (inFlight) {
       setRemaining(formatRemaining(bootstrap?.expires_at));
       tickRef.current = setInterval(() => {
@@ -126,19 +125,6 @@ export function Account() {
     setRefreshing(true);
     try { await refreshAccount(); await load(); } catch {}
     setRefreshing(false);
-  };
-
-  const handleImportCache = async () => {
-    setImporting(true);
-    setImportResult(null);
-    try {
-      const result = await importCache();
-      setImportResult({ status: result.status, user_id: result.user_id });
-      await load();
-    } catch (e) {
-      setImportResult({ status: 'error', user_id: e instanceof Error ? e.message : String(e) });
-    }
-    setImporting(false);
   };
 
   const handleTest = async () => {
@@ -167,30 +153,30 @@ export function Account() {
     setTesting(false);
   };
 
+  const startPolling = (id: string) => {
+    if (pollRef.current) clearInterval(pollRef.current);
+    pollRef.current = setInterval(async () => {
+      try {
+        const status = await getBootstrapStatus(id);
+        setBootstrap(status);
+        if (status.status === 'completed') {
+          clearInterval(pollRef.current);
+          await load();
+        } else if (status.status === 'error' || status.status === 'cancelled') {
+          clearInterval(pollRef.current);
+        }
+      } catch {
+        // keep polling
+      }
+    }, 2000);
+  };
+
   const handleBootstrap = async (method: BootstrapMethod) => {
+    setCallbackURL('');
     try {
       const resp = await startBootstrap(method);
       setBootstrap(resp);
-
-      if (resp.status === 'completed') {
-        await load();
-        return;
-      }
-
-      pollRef.current = setInterval(async () => {
-        try {
-          const status = await getBootstrapStatus(resp.id);
-          setBootstrap(status);
-          if (status.status === 'completed') {
-            clearInterval(pollRef.current);
-            await load();
-          } else if (status.status === 'error' || status.status === 'cancelled') {
-            clearInterval(pollRef.current);
-          }
-        } catch {
-          // keep polling
-        }
-      }, 2000);
+      startPolling(resp.id);
     } catch (e) {
       setBootstrap({
         id: '',
@@ -202,12 +188,39 @@ export function Account() {
     }
   };
 
+  const handleSubmitCallback = async () => {
+    if (!bootstrap?.id || !callbackURL.trim()) return;
+    setSubmittingCallback(true);
+    try {
+      const resp = await submitBootstrapCallback({ id: bootstrap.id, callback_url: callbackURL.trim() });
+      setBootstrap(resp);
+      if (resp.status === 'completed') {
+        await load();
+      } else {
+        startPolling(resp.id);
+      }
+    } catch (e) {
+      setBootstrap(prev => prev ? {
+        ...prev,
+        status: 'error',
+        error: e instanceof Error ? e.message : String(e),
+      } : {
+        id: '',
+        status: 'error',
+        method: 'remote_callback',
+        error: e instanceof Error ? e.message : String(e),
+        started_at: '',
+      });
+    }
+    setSubmittingCallback(false);
+  };
+
   const handleCancel = async () => {
     if (!bootstrap?.id) return;
     try {
       await cancelBootstrap(bootstrap.id);
       if (pollRef.current) clearInterval(pollRef.current);
-      setBootstrap({ ...bootstrap, status: 'cancelled', error: '' });
+      setBootstrap({ ...bootstrap, status: 'cancelled', error: '', phase: '' });
     } catch (e) {
       setBootstrap({
         ...bootstrap,
@@ -220,9 +233,8 @@ export function Account() {
   const mask = (s: string) => s.length > 6 ? s.slice(0, 3) + '***' + s.slice(-3) : s;
   const fmtToken = (n: number) => n >= 1000000 ? `${(n / 1000000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String(n);
   const inFlight =
-    bootstrap?.status === 'running' ||
-    bootstrap?.status === 'awaiting_callback' ||
-    bootstrap?.status === 'deriving';
+    bootstrap?.status === 'awaiting_callback_url' ||
+    bootstrap?.status === 'running';
 
   if (loading || !data) {
     return (
@@ -237,8 +249,6 @@ export function Account() {
 
   const hasCosy = data.credential?.cosy_key !== '';
   const hasEUI = data.credential?.encrypt_user_info !== '';
-  const hasUID = data.credential?.user_id !== '';
-  const hasMID = data.credential?.machine_id !== '';
   const tokenExpired = isExpired(data.stored_meta?.token_expire_time || '');
 
   return (
@@ -250,27 +260,14 @@ export function Account() {
             className="btn btn-primary"
             onClick={() => handleBootstrap('remote_callback')}
             disabled={inFlight}
-            title="启动一次性 127.0.0.1:37510 回调，浏览器登录后自动写入凭据，无需本地灵码客户端"
+            title="生成浏览器登录链接，完成登录后把 127.0.0.1:37510 的最终回调地址粘贴回此页面"
           >
             <Globe size={16} />
             浏览器登录
           </button>
-          <button
-            className="btn"
-            onClick={() => handleBootstrap('ws')}
-            disabled={inFlight}
-            title="连接本机灵码客户端（监听 127.0.0.1:37010）派生凭据"
-          >
-            <Cpu size={16} />
-            本地灵码
-          </button>
-          <button className="btn" onClick={handleImportCache} disabled={importing}>
-            <Download size={16} />
-            {importing ? '导入中...' : '导入本地缓存'}
-          </button>
           <button className="btn" onClick={handleRefresh} disabled={refreshing}>
             <RefreshCw size={16} />
-            {refreshing ? '刷新中...' : '刷新凭据'}
+            {refreshing ? '读取中...' : '重新读取凭据'}
           </button>
           <button className="btn" onClick={handleTest} disabled={testing}>
             <Zap size={16} />
@@ -283,14 +280,13 @@ export function Account() {
         <div className="card" style={{ marginBottom: 16, borderLeft: '3px solid var(--primary)' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
             <h4 style={{ margin: 0 }}>
-              {bootstrap.status === 'running' && '登录初始化中...'}
-              {bootstrap.status === 'awaiting_callback' && '等待浏览器回调'}
-              {bootstrap.status === 'deriving' && '派生凭据中...'}
+              {bootstrap.status === 'awaiting_callback_url' && '等待回填回调链接'}
+              {bootstrap.status === 'running' && '正在处理回调链接'}
               {bootstrap.status === 'completed' && '登录完成'}
               {bootstrap.status === 'error' && '登录失败'}
               {bootstrap.status === 'cancelled' && '已取消'}
             </h4>
-            {(bootstrap.status === 'running' || bootstrap.status === 'awaiting_callback' || bootstrap.status === 'deriving') && (
+            {inFlight && (
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                 {remaining && <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>剩余 {remaining}</span>}
                 <button className="btn btn-sm" onClick={handleCancel}>
@@ -299,24 +295,41 @@ export function Account() {
               </div>
             )}
           </div>
-          {bootstrap.auth_url && (bootstrap.status === 'running' || bootstrap.status === 'awaiting_callback') && (
+          {bootstrap.auth_url && bootstrap.status === 'awaiting_callback_url' && (
             <div style={{ marginBottom: 8 }}>
-              <p style={{ marginBottom: 8 }}>请在浏览器中打开以下链接完成阿里云登录：</p>
+              <p style={{ marginBottom: 8 }}>请在你自己的浏览器中打开以下链接完成阿里云登录：</p>
               <a href={bootstrap.auth_url} target="_blank" rel="noopener noreferrer"
                 style={{ wordBreak: 'break-all', color: 'var(--primary)', fontWeight: 600, fontSize: 13 }}>
                 {bootstrap.auth_url}
               </a>
-              <p style={{ marginTop: 8, fontSize: 13, color: 'var(--text-secondary)' }}>
-                登录完成后凭据将自动注入。本页面会在凭据写入后自动刷新。
-              </p>
+              <div style={{ marginTop: 12, padding: 12, borderRadius: 8, background: 'var(--bg-secondary)' }}>
+                <p style={{ margin: 0, fontSize: 13, color: 'var(--text-secondary)' }}>
+                  登录完成后，浏览器会跳到 `127.0.0.1:37510`。即使页面打不开，也请直接复制地址栏里的完整回调链接并粘贴到下面。
+                </p>
+              </div>
+              <div style={{ display: 'grid', gap: 8, marginTop: 12 }}>
+                <textarea
+                  value={callbackURL}
+                  onChange={(e) => setCallbackURL(e.target.value)}
+                  placeholder="粘贴完整的 http://127.0.0.1:37510/... 回调链接"
+                  rows={4}
+                  style={{ width: '100%', resize: 'vertical' }}
+                />
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <button className="btn btn-primary" onClick={handleSubmitCallback} disabled={submittingCallback || !callbackURL.trim()}>
+                    <ClipboardPaste size={16} />
+                    {submittingCallback ? '提交中...' : '提交回调链接'}
+                  </button>
+                </div>
+              </div>
             </div>
           )}
-          {bootstrap.status === 'deriving' && (
+          {bootstrap.status === 'running' && (
             <p style={{ color: 'var(--text-secondary)' }}>
-              正在通过远程 user/login 派生 cosy_key 与 encrypt_user_info...
+              正在解析回调参数并生成凭据，请稍候。
             </p>
           )}
-          <PhaseProgress phase={bootstrap.phase} status={bootstrap.status} />
+          <PhaseProgress phase={bootstrap.phase || bootstrap.status} status={bootstrap.status} />
           {bootstrap.status === 'completed' && (
             <p style={{ color: 'var(--success)' }}>凭据已成功更新。</p>
           )}
@@ -327,26 +340,16 @@ export function Account() {
             <p style={{ color: 'var(--error)' }}>
               {bootstrap.error || '未知错误'}
               {bootstrap.error?.includes('timeout') && (
-                <span> 5 分钟内未完成浏览器登录，请重试。</span>
+                <span> 5 分钟内未完成登录或未回填回调链接，请重试。</span>
+              )}
+              {bootstrap.error?.includes('callback url host must be') && (
+                <span> 请确认粘贴的是完整的 `127.0.0.1:37510` 回调地址。</span>
               )}
               {bootstrap.error?.includes('all remote login strategies failed') && (
-                <span> 远程派生 cosy_key 失败（可能被 WAF 拦截），请稍后重试或联系管理员。</span>
-              )}
-              {bootstrap.method === 'ws' && bootstrap.error?.toLowerCase().includes('websocket') && (
-                <span> 请确保本机灵码客户端正在运行（端口 37010），或改用「浏览器登录」。</span>
+                <span> 远程派生 cosy_key 失败，请稍后重试。</span>
               )}
             </p>
           )}
-        </div>
-      )}
-
-      {importResult && (
-        <div className="card" style={{ marginBottom: 16, borderLeft: importResult.status === 'imported' ? '3px solid var(--success)' : '3px solid var(--error)' }}>
-          <p style={{ color: importResult.status === 'imported' ? 'var(--success)' : 'var(--error)' }}>
-            {importResult.status === 'imported'
-              ? `成功导入凭据 (UserID: ${importResult.user_id})`
-              : importResult.user_id}
-          </p>
         </div>
       )}
 
@@ -373,16 +376,6 @@ export function Account() {
               <tr><td style={{ fontWeight: 600 }}>CosyKey 前缀</td><td>{testResult.credential_snapshot.cosy_key_prefix || '-'}</td></tr>
             </tbody>
           </table>
-          {!testResult.success && testResult.error?.includes('credentials unavailable') && (
-            <p style={{ marginTop: 8, color: 'var(--text-secondary)', fontSize: 13 }}>
-              凭据不完整，请检查是否所有字段都已正确注入。建议使用「浏览器登录」重新获取完整凭据。
-            </p>
-          )}
-          {!testResult.success && (testResult.status_code === 401 || testResult.status_code === 403) && (
-            <p style={{ marginTop: 8, color: 'var(--text-secondary)', fontSize: 13 }}>
-              Token 认证失败，可能已过期或签名不匹配。请尝试「刷新凭据」或重新登录。
-            </p>
-          )}
         </div>
       )}
 
@@ -440,7 +433,7 @@ export function Account() {
         </table>
         {!data.oauth?.has_access_token && (
           <p style={{ marginTop: 8, color: 'var(--text-secondary)', fontSize: 13 }}>
-            OAuth Token 缺失，自动刷新功能不可用。建议使用「浏览器登录」获取完整凭据。
+            OAuth Token 缺失。请使用“浏览器登录”重新生成并回填回调链接。
           </p>
         )}
       </div>

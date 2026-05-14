@@ -248,12 +248,11 @@ export interface AccountTestResult {
   timestamp: string;
 }
 
-export type BootstrapMethod = 'auto' | 'ws' | 'remote_callback';
+export type BootstrapMethod = 'remote_callback';
 
 export type BootstrapStatus =
+  | 'awaiting_callback_url'
   | 'running'
-  | 'awaiting_callback'
-  | 'deriving'
   | 'completed'
   | 'error'
   | 'cancelled';
@@ -267,6 +266,11 @@ export interface BootstrapResponse {
   error?: string;
   started_at: string;
   expires_at?: string;
+}
+
+export interface BootstrapSubmitRequest {
+  id: string;
+  callback_url: string;
 }
 
 export type Theme = 'light' | 'dark';

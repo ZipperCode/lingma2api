@@ -9,14 +9,16 @@ import (
 func TestBootstrapManager_StartAuto_PrefersRemoteCallback(t *testing.T) {
 	mgr, _ := newTestManager(t)
 
-	sess, err := mgr.Start("auto")
+	sess, err := mgr.Start("")
 	if err != nil {
-		t.Fatalf("Start auto: %v", err)
+		 t.Fatalf("Start default: %v", err)
 	}
 	if sess.Method != "remote_callback" {
 		t.Errorf("method: got %q, want remote_callback", sess.Method)
 	}
-	_ = mgr.Cancel(sess.ID)
+	if sess.Status != "awaiting_callback_url" {
+		t.Errorf("status: got %q, want awaiting_callback_url", sess.Status)
+	}
 }
 
 func TestBootstrapManager_ConcurrentSessionRejected(t *testing.T) {
@@ -26,7 +28,7 @@ func TestBootstrapManager_ConcurrentSessionRejected(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first start: %v", err)
 	}
-	waitForStatus(t, mgr, sess1.ID, 2*time.Second, "awaiting_callback")
+	waitForStatus(t, mgr, sess1.ID, 2*time.Second, "awaiting_callback_url")
 
 	_, err = mgr.StartRemoteCallback()
 	if err == nil {

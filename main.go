@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"lingma2api/internal/api"
-	"lingma2api/internal/auth"
 	"lingma2api/internal/config"
 	"lingma2api/internal/db"
 	"lingma2api/internal/proxy"
@@ -37,21 +36,6 @@ func main() {
 		CosyVersion: cfg.Lingma.CosyVersion,
 	})
 	credentials := proxy.NewCredentialManager(cfg.Credential, time.Now)
-
-	// Auto-import from ~/.lingma cache if auth file missing
-	if _, err := os.Stat(cfg.Credential.AuthFile); os.IsNotExist(err) {
-		if imported, err := auth.TryImportFromLingmaCache(cfg.Credential.AuthFile); err == nil {
-			log.Printf("auto-imported credentials from ~/.lingma cache (source: %s)", imported.Source)
-		}
-	}
-
-	// Setup auto-refresh: local Lingma WebSocket. The standard OAuth refresh
-	// grant is not used — Lingma refresh goes through LSP auth/refreshToken,
-	// not oauth.alibabacloud.com/v1/token.
-	refresher := &auth.WSRefresher{}
-	credentials.SetRefreshFn(func(ctx context.Context) error {
-		return auth.RefreshAndSave(ctx, cfg.Credential.AuthFile, refresher, true, "")
-	})
 
 	transport := proxy.NewNativeTransport(cfg.Lingma.BaseURL, signer, 90*time.Second)
 	models := proxy.NewModelService(transport, credentials, proxy.DefaultAliases(), time.Now)
@@ -111,7 +95,7 @@ func main() {
 
 	bootstrapMgr := api.NewBootstrapManager(
 		cfg.Credential.AuthFile,
-		cfg.Lingma.OAuthListenAddr,
+		firstNonEmpty(cfg.Lingma.OAuthCallbackAddr, cfg.Lingma.OAuthListenAddr),
 		cfg.Lingma.CosyVersion,
 	)
 	bootstrapMgr.OnCredentialSaved = func() {
@@ -168,4 +152,13 @@ func sweepSessions(ctx context.Context, store *proxy.SessionStore) {
 			_ = store.SweepExpired(context.Background())
 		}
 	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }

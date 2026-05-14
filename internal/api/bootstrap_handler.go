@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
-
-	"lingma2api/internal/auth"
 )
 
 func (server *Server) handleAdminAccountBootstrap(w http.ResponseWriter, r *http.Request) {
@@ -97,7 +95,7 @@ func (server *Server) handleAdminAccountBootstrapStatus(w http.ResponseWriter, r
 	writeJSON(w, http.StatusOK, sess)
 }
 
-func (server *Server) handleAdminAccountImportCache(w http.ResponseWriter, r *http.Request) {
+func (server *Server) handleAdminAccountBootstrapSubmit(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeMethodNotAllowed(w, http.MethodPost)
 		return
@@ -113,15 +111,35 @@ func (server *Server) handleAdminAccountImportCache(w http.ResponseWriter, r *ht
 		return
 	}
 
-	stored, err := auth.TryImportFromLingmaCache(bootstrap.AuthFile())
-	if err != nil {
-		writeOpenAIError(w, http.StatusBadRequest, err.Error())
+	var body struct {
+		ID          string `json:"id"`
+		CallbackURL string `json:"callback_url"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeOpenAIError(w, http.StatusBadRequest, "invalid json: "+err.Error())
+		return
+	}
+	if body.ID == "" {
+		writeOpenAIError(w, http.StatusBadRequest, "missing id")
+		return
+	}
+	if body.CallbackURL == "" {
+		writeOpenAIError(w, http.StatusBadRequest, "missing callback_url")
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
-		"status":   "imported",
-		"user_id":  stored.Auth.UserID,
-		"source":   stored.Source,
-	})
+	sess, err := bootstrap.SubmitCallbackURL(body.ID, body.CallbackURL)
+	if err != nil {
+		status := http.StatusBadRequest
+		switch {
+		case strings.Contains(err.Error(), "session not found"):
+			status = http.StatusNotFound
+		case strings.Contains(err.Error(), "already"):
+			status = http.StatusConflict
+		}
+		writeOpenAIError(w, status, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, sess)
 }
