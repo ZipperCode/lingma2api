@@ -439,7 +439,8 @@ func projectCanonicalTurn(turn CanonicalTurn) ([]Message, error) {
 			case CanonicalBlockReasoning:
 				appendInlineText(&message.Content, "[thinking]"+block.Text+"[/thinking]")
 			case CanonicalBlockImage:
-				appendStructuredText(&message.Content, mediaBlockToText(block.Type, block.Data))
+				// Skip — images are handled by the body builder.
+				continue
 			case CanonicalBlockDocument:
 				appendStructuredText(&message.Content, mediaBlockToText(block.Type, block.Data))
 			case CanonicalBlockToolCall:
@@ -501,7 +502,8 @@ func projectCanonicalUserLikeTurn(turn CanonicalTurn) []Message {
 		case CanonicalBlockReasoning:
 			appendInlineText(&current.Content, "[thinking]"+block.Text+"[/thinking]")
 		case CanonicalBlockImage:
-			appendStructuredText(&current.Content, mediaBlockToText(block.Type, block.Data))
+			// Skip — images are handled by the body builder (uploader + parts injection).
+			continue
 		case CanonicalBlockDocument:
 			appendStructuredText(&current.Content, mediaBlockToText(block.Type, block.Data))
 		case CanonicalBlockToolResult:

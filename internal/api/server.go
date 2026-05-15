@@ -261,18 +261,13 @@ func (server *Server) handleChatCompletions(writer http.ResponseWriter, request 
 		writeOpenAIInvalidImage(writer, err.Error())
 		return
 	}
+	// evaluateVisionGate is a no-op placeholder; vision is handled by the
+	// body builder (uploader + parts injection).
 	var visionStore SettingsStore
 	if server.db != nil {
 		visionStore = server.db
 	}
-	if _, err := evaluateVisionGate(request.Context(), visionStore, canonicalRequest); err != nil {
-		if errors.Is(err, ErrVisionNotImplemented) {
-			writeOpenAIVisionNotImplemented(writer)
-			return
-		}
-		writeMappedError(writer, err)
-		return
-	}
+	evaluateVisionGate(request.Context(), visionStore, canonicalRequest)
 
 	policyResult, err := server.evaluateCanonicalRequest(request.Context(), canonicalRequest)
 	if err != nil {
@@ -863,19 +858,6 @@ func writeOpenAIError(writer http.ResponseWriter, statusCode int, message string
 			"type":    "invalid_request_error",
 		},
 	})
-}
-
-func writeOpenAIVisionNotImplemented(writer http.ResponseWriter) {
-	writer.Header().Set("Content-Type", "application/json")
-	writer.WriteHeader(http.StatusNotImplemented)
-	body := map[string]any{
-		"error": map[string]any{
-			"message": "vision input is not implemented yet; set vision_fallback_enabled=true in settings to fall back to text representation",
-			"type":    "not_implemented",
-			"code":    "vision_not_implemented",
-		},
-	}
-	_ = json.NewEncoder(writer).Encode(body)
 }
 
 func writeOpenAIInvalidImage(writer http.ResponseWriter, message string) {

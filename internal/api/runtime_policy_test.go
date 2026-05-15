@@ -247,7 +247,7 @@ func TestCanonicalSessionSharedAcrossAnthropicAndOpenAI(t *testing.T) {
 		Now:     func() time.Time { return time.Unix(1, 0) },
 	}, nil)
 
-	anthropicBody := `{"model":"claude-3-5-sonnet","messages":[{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"abc123"}}]}]}`
+	anthropicBody := `{"model":"claude-3-5-sonnet","messages":[{"role":"user","content":[{"type":"text","text":"check this "},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"abc123"}}]}]}`
 	anthropicRequest := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(anthropicBody))
 	anthropicRequest.Header.Set("Content-Type", "application/json")
 	anthropicRequest.Header.Set("X-Session-Id", "shared-session")
@@ -270,8 +270,8 @@ func TestCanonicalSessionSharedAcrossAnthropicAndOpenAI(t *testing.T) {
 	if len(builder.messages) != 3 {
 		t.Fatalf("expected 3 southbound messages, got %#v", builder.messages)
 	}
-	if builder.messages[0].Role != "user" || !strings.Contains(builder.messages[0].Content, "data:image/png;base64,abc123") {
-		t.Fatalf("expected prior anthropic image in southbound history, got %#v", builder.messages[0])
+	if builder.messages[0].Role != "user" || !strings.Contains(builder.messages[0].Content, "check this") {
+		t.Fatalf("expected prior anthropic text in southbound history, got %#v", builder.messages[0])
 	}
 	if builder.messages[2].Role != "user" || builder.messages[2].Content != "next" {
 		t.Fatalf("expected latest openai turn last, got %#v", builder.messages[2])

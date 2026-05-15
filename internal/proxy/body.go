@@ -107,6 +107,30 @@ func (builder *BodyBuilder) BuildCanonical(request CanonicalRequest, modelKey st
 		serializedMessages = append(serializedMessages, m)
 	}
 
+	// When images are present, convert the last user message to multimodal
+	// format so the upstream Lingma API receives both text and image URLs.
+	if len(imageURLs) > 0 {
+		for i := len(serializedMessages) - 1; i >= 0; i-- {
+			if serializedMessages[i]["role"] == "user" {
+				text, _ := serializedMessages[i]["content"].(string)
+				parts := []map[string]any{
+					{"type": "text", "text": text},
+				}
+				for _, url := range imageURLs {
+					parts = append(parts, map[string]any{
+						"type": "image_url",
+						"image_url": map[string]any{
+							"url":    url,
+							"detail": "auto",
+						},
+					})
+				}
+				serializedMessages[i]["parts"] = parts
+				break
+			}
+		}
+	}
+
 	payload := map[string]any{
 		"request_id":       requestID,
 		"request_set_id":   "",

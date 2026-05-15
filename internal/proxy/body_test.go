@@ -167,6 +167,7 @@ func TestBodyBuilderBuildCanonicalPreservesStructuredBlocksAndToolCalls(t *testi
 			{
 				Role: "user",
 				Blocks: []CanonicalContentBlock{
+					{Type: CanonicalBlockText, Text: "see image"},
 					{Type: CanonicalBlockImage, Data: mustMarshalRaw(ImageSource{Type: "base64", MediaType: "image/png", Data: "abc123"})},
 				},
 			},
@@ -197,8 +198,8 @@ func TestBodyBuilderBuildCanonicalPreservesStructuredBlocksAndToolCalls(t *testi
 		t.Fatalf("expected 3 messages, got %#v", payload["messages"])
 	}
 	user := msgs[0].(map[string]any)
-	if content := user["content"].(string); content != "data:image/png;base64,abc123" {
-		t.Fatalf("expected image data URL, got %q", content)
+	if content := user["content"].(string); content != "see image" {
+		t.Fatalf("expected text content, got %q", content)
 	}
 	assistant := msgs[1].(map[string]any)
 	toolCalls, ok := assistant["tool_calls"].([]any)

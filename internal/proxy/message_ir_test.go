@@ -155,7 +155,7 @@ func TestCanonicalizeAnthropicRequestPreservesOrderedBlocks(t *testing.T) {
 	if len(messages) != 4 {
 		t.Fatalf("expected 4 legacy messages, got %d", len(messages))
 	}
-	if messages[1].Role != "user" || messages[1].Content != "look at this\ndata:image/png;base64,aGVsbG8=\ndata:application/pdf;base64,cGRm" {
+	if messages[1].Role != "user" || messages[1].Content != "look at this\ndata:application/pdf;base64,cGRm" {
 		t.Fatalf("unexpected projected user message: %#v", messages[1])
 	}
 	if messages[2].Role != "tool" || messages[2].ToolCallID != "tool_1" {

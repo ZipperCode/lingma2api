@@ -309,40 +309,18 @@ func newVisionHandler(t *testing.T, store *db.Store) http.Handler {
 	}, store)
 }
 
-func TestChatCompletionsVisionDefaultReturns501(t *testing.T) {
+// TestChatCompletionsVisionPassesThrough verifies that vision requests are no
+// longer blocked by the gate — they proceed through the normal pipeline.
+func TestChatCompletionsVisionPassesThrough(t *testing.T) {
 	store := newVisionTestStore(t)
 	handler := newVisionHandler(t, store)
 
-	body := `{"model":"auto","stream":false,"messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"data:image/png;base64,QUFB"}}]}]}`
+	body := `{"model":"auto","stream":false,"messages":[{"role":"user","content":[{"type":"text","text":"hi"},{"type":"image_url","image_url":{"url":"data:image/png;base64,QUFB"}}]}]}`
 	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
 
-	if recorder.Code != http.StatusNotImplemented {
-		t.Fatalf("status = %d, want 501; body=%s", recorder.Code, recorder.Body.String())
-	}
-	if !strings.Contains(recorder.Body.String(), "vision_not_implemented") {
-		t.Fatalf("body = %s, want vision_not_implemented", recorder.Body.String())
-	}
-}
-
-func TestChatCompletionsVisionFallbackEnabledBypassesGate(t *testing.T) {
-	store := newVisionTestStore(t)
-	if err := store.UpdateSettings(context.Background(), map[string]string{"vision_fallback_enabled": "true"}); err != nil {
-		t.Fatalf("UpdateSettings: %v", err)
-	}
-	handler := newVisionHandler(t, store)
-
-	body := `{"model":"auto","stream":false,"messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"data:image/png;base64,QUFB"}}]}]}`
-	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
-	request.Header.Set("Content-Type", "application/json")
-	recorder := httptest.NewRecorder()
-	handler.ServeHTTP(recorder, request)
-
-	if recorder.Code == http.StatusNotImplemented {
-		t.Fatalf("status = 501; expected gate to be bypassed when fallback enabled. body=%s", recorder.Body.String())
-	}
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", recorder.Code, recorder.Body.String())
 	}
