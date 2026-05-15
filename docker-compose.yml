@@ -1,0 +1,14 @@
+services:
+  lingma2api:
+    build: .
+    container_name: lingma2api
+    ports:
+      - "8080:8080"
+    volumes:
+      # Config file (read-only in container, editable on host)
+      - ./config.yaml:/app/config/config.yaml:ro
+      # Auth credentials (persistent, e.g. credentials.json)
+      - ./auth/:/app/auth/
+      # Data directory (persistent — SQLite database lives here)
+      - ./data/:/app/data/
+    restart: unless-stopped

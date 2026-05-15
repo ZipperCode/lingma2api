@@ -1,0 +1,37 @@
+# Node / frontend
+node_modules/
+frontend/node_modules/
+
+# Git
+.git/
+.gitignore
+
+# Local build / dev artifacts
+frontend-dist/
+lingma2api
+lint/
+.worktrees/
+
+# IDE / tooling
+.idea/
+.vscode/
+.trellis/
+.opencode/
+.claude/
+.serena/
+.ace-tool/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Secrets (should not be baked into image)
+auth/credentials.json
+auth/credentials_remote.json
+
+# Database (will be mounted at runtime)
+*.db
+data/
+
+# Doc files (not needed for build)
+*.md

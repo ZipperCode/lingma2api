@@ -42,6 +42,71 @@ chmod +x ./dev.sh
 ./dev.sh
 ```
 
+## Docker 部署
+
+无需安装 Go / Node 环境，通过 Docker 一键启动服务。
+
+### 前置条件
+
+- 已安装 [Docker](https://docs.docker.com/get-docker/) 和 [Docker Compose](https://docs.docker.com/compose/install/)
+- 已准备配置文件 `config.yaml`（项目自带默认配置）
+- 已准备认证文件 `auth/credentials.json`（参考 `auth/credentials.example.json` 生成）
+
+### 快速启动
+
+```bash
+# 1. 构建镜像
+docker build -t lingma2api .
+
+# 2. 准备数据目录
+mkdir -p data
+
+# 3. 启动服务
+docker compose up -d
+
+# 4. 查看日志
+docker compose logs -f
+```
+
+启动后访问：
+
+- 控制台：`http://localhost:8080`
+- OpenAI：`http://localhost:8080/v1`
+- Anthropic：`http://localhost:8080/v1/messages`
+
+### 停止服务
+
+```bash
+docker compose down
+```
+
+### 更新镜像
+
+```bash
+# 拉取最新代码后重新构建并启动
+git pull
+docker compose up -d --build
+```
+
+### 卷映射说明
+
+| 宿主机路径 | 容器路径 | 说明 |
+|---|---|---|
+| `./config.yaml` | `/app/config/config.yaml` | 配置文件（只读） |
+| `./auth/` | `/app/auth/` | 认证文件（持久化） |
+| `./data/` | `/app/data/` | SQLite 数据库（持久化） |
+
+- `auth/credentials.json` 通过管理页面的"浏览器登录"功能生成
+- `data/` 目录持久化存储 SQLite 数据库，容器重启后数据不丢失
+- 修改 `config.yaml` 后需重启容器生效：`docker compose restart`
+
+### 首次登录
+
+1. 启动服务后打开 `http://localhost:8080`
+2. 进入"账号管理"页面，点击"浏览器登录"
+3. 按页面提示完成阿里云登录流程
+4. 认证文件将持久化保存在 `auth/credentials.json` 中
+
 ## 当前能力
 
 - `GET /v1/models`
