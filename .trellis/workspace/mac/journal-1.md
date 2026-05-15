@@ -38,3 +38,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 2: 团队配置文件提交到 git
+
+**Date**: 2026-05-15
+**Task**: 团队配置文件提交到 git
+**Branch**: `main`
+
+### Summary
+
+将 .claude/ .opencode/ .trellis/ AGENTS.md 提交到 git 实现团队共享，更新 .trellis/.gitignore 排除个人 workspace journal
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7c505bf` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
