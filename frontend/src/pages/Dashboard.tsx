@@ -34,7 +34,7 @@ import { StatCard } from '../components/StatCard';
 import type { DashboardData, OverviewData, RequestLog } from '../types';
 
 const RANGES = ['1h', '24h', '7d', '30d'];
-const COLORS = ['#4361ee', '#2d6a4f', '#e85d04', '#9b5de5', '#00b4d8', '#ef5350', '#66bb6a', '#ffa726'];
+const COLORS = ['#cc785c', '#5db8a6', '#e8a55a', '#a9583e', '#5db872', '#c64545', '#8e8b82', '#252320'];
 
 export function Dashboard() {
   const navigate = useNavigate();
@@ -297,8 +297,8 @@ export function Dashboard() {
               <YAxis tick={{ fontSize: 11 }} />
               <Tooltip />
               <Legend />
-              <Bar dataKey="prompt" fill="#4361ee" name="Prompt" stackId="a" />
-              <Bar dataKey="completion" fill="#2d6a4f" name="Completion" stackId="a" />
+              <Bar dataKey="prompt" fill="#cc785c" name="Prompt" stackId="a" />
+              <Bar dataKey="completion" fill="#5db8a6" name="Completion" stackId="a" />
             </BarChart>
           </ResponsiveContainer>
         </div>
